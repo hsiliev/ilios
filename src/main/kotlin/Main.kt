@@ -67,8 +67,17 @@ fun portFrom(value: String?): Int {
     return v.toIntOrNull()?.takeIf { it in 1..65535 } ?: error("PORT must be a number between 1 and 65535, got '$v'")
 }
 
+/** Public address for reset links from BASE_URL (default http://localhost:PORT); must be an http(s) URL with a host. */
+fun baseUrlFrom(value: String?, port: Int): String {
+    val v = value?.trim().orEmpty().trimEnd('/')
+    if (v.isEmpty()) return "http://localhost:$port"
+    val uri = runCatching { java.net.URI(v) }.getOrNull()
+    require(uri != null && uri.scheme in listOf("http", "https") && !uri.host.isNullOrBlank()) { "BASE_URL must be an http(s) URL, got '$v'" }
+    return v
+}
+
 private val PORT = portFrom(System.getenv("PORT"))
-private val BASE_URL = "http://localhost:$PORT" // used in password-reset links
+private val BASE_URL = baseUrlFrom(System.getenv("BASE_URL"), PORT) // used in password-reset links
 private const val COOKIE = "sid"
 private val emailRe = Regex("^[^@\\s]{1,64}@[^@\\s]+\\.[^@\\s]+$")
 

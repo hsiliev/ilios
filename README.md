@@ -36,9 +36,12 @@ If either is missing the app still runs, but no mail is sent: reset links are pr
 Optional variables:
 
 - `PORT` – HTTP port (default `8081`); reset links in emails point at `http://localhost:<PORT>`.
+- `BASE_URL` – public address used in password-reset links (default `http://localhost:$PORT`), e.g. `https://ilios.example.com`.
+- `MAIL_HOST` – SMTP host (default `smtp.gmail.com`).
+- `MAIL_PORT` – SMTP port (default `587`, STARTTLS).
 - `SOLAX_URL` – SolaX API host for your account's region (default `https://openapi-eu.solaxcloud.com`; the URL is under "My Account" in the SolaX developer portal).
 
-Everything else is fixed: database in `./data/ilios`, the public Open-Meteo endpoints, Gmail SMTP on `smtp.gmail.com:587`, and the reset-link host (always `localhost`). Change these in the source (`Main.kt`, `Mail.kt`, `Weather.kt`) if needed.
+Everything else is fixed: database in `./data/ilios`, the public Open-Meteo endpoints, and the reset-link host (always `localhost`). Change these in the source (`Main.kt`, `Mail.kt`, `Weather.kt`) if needed.
 
 ## Run
 

@@ -50,7 +50,7 @@ sudo install -d -o "$APP_USER" -g "$APP_USER" -m 0755 "$INSTALL_DIR" "$INSTALL_D
 sudo install -d -m 0755 "$CONF_DIR"
 if [[ ! -e "$CONF_DIR/ilios.env" ]]; then
   log "Creating $CONF_DIR/ilios.env (set MAIL_USERNAME / MAIL_PASSWORD there to send mail)"
-  printf 'PORT=%s\n# SOLAX_URL=\n# MAIL_USERNAME=\n# MAIL_PASSWORD=\n# JAVA_OPTS=-Xmx512m\n' "$PORT" | sudo tee "$CONF_DIR/ilios.env" >/dev/null
+  printf 'PORT=%s\n# SOLAX_URL=\n# BASE_URL=https://ilios.example.com\n# MAIL_HOST=smtp.gmail.com\n# MAIL_PORT=587\n# MAIL_USERNAME=\n# MAIL_PASSWORD=\n# JAVA_OPTS=-Xmx512m\n' "$PORT" | sudo tee "$CONF_DIR/ilios.env" >/dev/null
   sudo chmod 0640 "$CONF_DIR/ilios.env"; sudo chown root:"$APP_USER" "$CONF_DIR/ilios.env"
 fi
 
