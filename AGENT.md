@@ -17,9 +17,9 @@ Stack (fixed by the owner): Kotlin, Ktor (CIO engine), Koin, Exposed, kotlinx.se
 ./gradlew test                # in-process tests, throwaway database, no port, no network
 ```
 
-- The **only configuration** is two environment variables: `MAIL_USERNAME` (the sending Gmail address) and `MAIL_PASSWORD` (its Google app password). There is no default account. If either is missing no mail is sent and reset links are printed to the server log (`PASSWORD RESET for …`).
-- Everything else is deliberately hard-coded: port 8080, DB `./data/ilios`, public Open-Meteo endpoints, `BASE_URL = http://localhost:8080` (used in reset links), session cookie not `Secure`. These are in `Main.kt`, `Weather.kt`, `Mail.kt`. Changing any of them to be configurable is a product decision – ask first.
-- The owner often has the app running locally on 8080 with their real data in `./data/`. **Never run tests against 8080 and never `kill`/`pkill` by `MainKt`** – that kills the owner's instance, and curl calls to 8080 hit their real database (an earlier session polluted it that way and had to clean up). Use `./gradlew test`, or run a copy from another directory with the port in mind.
+- Configuration is by environment variables: optional `PORT` (default 8080; invalid values fail at start-up, see `portFrom` in `Main.kt`) and the mail pair: `MAIL_USERNAME` (the sending Gmail address) and `MAIL_PASSWORD` (its Google app password). There is no default account. If either is missing no mail is sent and reset links are printed to the server log (`PASSWORD RESET for …`).
+- Everything else is deliberately hard-coded: DB `./data/ilios`, public Open-Meteo endpoints, `BASE_URL = http://localhost:$PORT` (used in reset links, host is always localhost), session cookie not `Secure`. These are in `Main.kt`, `Weather.kt`, `Mail.kt`. Changing any of them to be configurable is a product decision – ask first.
+- The owner often has the app running locally on 8080 with their real data in `./data/`. **Never send test requests to 8080 and never `kill`/`pkill` by `MainKt`** – that kills the owner's instance and curl calls would hit their real database (an earlier session polluted it that way and had to clean up). For manual checks run a separate instance from a scratch directory on another port, e.g. `cd /tmp/scratch && PORT=18080 /path/to/build/install/ilios/bin/ilios`, and stop it by its PID. Automated checks: `./gradlew test`.
 
 ## Layout
 

@@ -33,7 +33,9 @@ export MAIL_PASSWORD='xxxx xxxx xxxx xxxx'
 
 If either is missing the app still runs, but no mail is sent: reset links are printed to the server log (look for `PASSWORD RESET for`).
 
-Everything else is fixed: port 8080, database in `./data/ilios`, the public Open-Meteo endpoints, Gmail SMTP on `smtp.gmail.com:587`, and reset links pointing at `http://localhost:8080`. Change these in the source (`Main.kt`, `Mail.kt`, `Weather.kt`) if needed.
+The HTTP port can be set with the optional `PORT` variable (default `8080`); reset links in emails point at `http://localhost:<PORT>`.
+
+Everything else is fixed: database in `./data/ilios`, the public Open-Meteo endpoints, Gmail SMTP on `smtp.gmail.com:587`, and the reset-link host (always `localhost`). Change these in the source (`Main.kt`, `Mail.kt`, `Weather.kt`) if needed.
 
 ## Run
 

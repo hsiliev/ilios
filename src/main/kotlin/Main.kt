@@ -51,8 +51,15 @@ class HttpError(val status: HttpStatusCode, message: String) : Exception(message
 @Serializable class LocationOut(val id: Long, val name: String, val country: String?, val solar: Boolean, val batteryKwh: Double, val solarKwp: Double, val pvRatio: Double)
 @Serializable class Msg(val message: String)
 
-private const val PORT = 8080
-private const val BASE_URL = "http://localhost:$PORT" // used in password-reset links
+/** HTTP port from the PORT environment variable; 8080 when unset or blank. A set but invalid value fails fast. */
+fun portFrom(value: String?): Int {
+    val v = value?.trim().orEmpty()
+    if (v.isEmpty()) return 8080
+    return v.toIntOrNull()?.takeIf { it in 1..65535 } ?: error("PORT must be a number between 1 and 65535, got '$v'")
+}
+
+private val PORT = portFrom(System.getenv("PORT"))
+private val BASE_URL = "http://localhost:$PORT" // used in password-reset links
 private const val COOKIE = "sid"
 private val emailRe = Regex("^[^@\\s]{1,64}@[^@\\s]+\\.[^@\\s]+$")
 
