@@ -11,14 +11,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Properties
 
-/** Gmail SMTP; the only setting is the MAIL_PASSWORD environment variable (a Google app password). */
-class Mailer {
+/** Gmail SMTP, configured by the MAIL_USERNAME (Gmail address) and MAIL_PASSWORD (Google app password) environment variables. */
+class Mailer(
+    private val user: String = System.getenv("MAIL_USERNAME")?.trim().orEmpty(),
+    private val password: String = System.getenv("MAIL_PASSWORD")?.trim().orEmpty(),
+) {
     private val host = "smtp.gmail.com"
-    private val user = "hsiliev@gmail.com"
-    private val password = System.getenv("MAIL_PASSWORD")?.trim().orEmpty()
 
-    /** Without a password mail is disabled and reset links go to the server log. */
-    val enabled = password.isNotEmpty()
+    /** Without both settings mail is disabled and reset links go to the server log. */
+    val enabled = user.isNotEmpty() && password.isNotEmpty()
 
     private val session: Session? = if (!enabled) null else {
         val props = Properties().apply {

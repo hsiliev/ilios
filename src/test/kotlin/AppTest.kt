@@ -118,4 +118,12 @@ class AppTest {
         assertEquals(21, report["days"]!!.jsonArray.size)
         assertEquals(3, report["intraday"]!!.jsonObject["points"]!!.jsonArray.size)
     }
+
+    @Test
+    fun mailNeedsBothUsernameAndPassword() {
+        assertEquals(true, Mailer("me@gmail.com", "app-password").enabled)
+        assertEquals(false, Mailer("", "app-password").enabled)
+        assertEquals(false, Mailer("me@gmail.com", "").enabled)
+        assertEquals(false, Mailer("", "").enabled)
+    }
 }

@@ -17,7 +17,7 @@ Stack (fixed by the owner): Kotlin, Ktor (CIO engine), Koin, Exposed, kotlinx.se
 ./gradlew test                # in-process tests, throwaway database, no port, no network
 ```
 
-- The **only configuration** is the `MAIL_PASSWORD` environment variable (Google app password for the hard-coded sender in `Mail.kt`). Without it no mail is sent and reset links are printed to the server log (`PASSWORD RESET for …`).
+- The **only configuration** is two environment variables: `MAIL_USERNAME` (the sending Gmail address) and `MAIL_PASSWORD` (its Google app password). There is no default account. If either is missing no mail is sent and reset links are printed to the server log (`PASSWORD RESET for …`).
 - Everything else is deliberately hard-coded: port 8080, DB `./data/ilios`, public Open-Meteo endpoints, `BASE_URL = http://localhost:8080` (used in reset links), session cookie not `Secure`. These are in `Main.kt`, `Weather.kt`, `Mail.kt`. Changing any of them to be configurable is a product decision – ask first.
 - The owner often has the app running locally on 8080 with their real data in `./data/`. **Never run tests against 8080 and never `kill`/`pkill` by `MainKt`** – that kills the owner's instance, and curl calls to 8080 hit their real database (an earlier session polluted it that way and had to clean up). Use `./gradlew test`, or run a copy from another directory with the port in mind.
 
@@ -28,7 +28,7 @@ src/main/kotlin/
   Main.kt       Ktor setup, Koin module, all routes (/api/...), request/response classes
   Db.kt         Exposed tables, H2 init, one-off migration of the old per-user settings table
   Auth.kt       PBKDF2 hashing, sessions and reset tokens (only SHA-256 of tokens stored)
-  Mail.kt       Gmail SMTP sender (disabled when MAIL_PASSWORD is empty)
+  Mail.kt       Gmail SMTP sender (disabled unless MAIL_USERNAME and MAIL_PASSWORD are set)
   Weather.kt    Open-Meteo client, database refresh loop, database reads
   Advice.kt     Report model (21-day series, watering advice), pure functions
 src/main/resources/static/   plain browser ES modules, no bundler
@@ -81,7 +81,7 @@ src/test/kotlin/AppTest.kt   Ktor testApplication against a temp H2 file
 
 - Remote: `git@github.com:hsiliev/ilios.git` (SSH; HTTPS has no stored credentials), branch `main`.
 - Commit author for this repo is `hsiliev@gmail.com`; the machine's global git email is a work address, so set the author explicitly. Commit messages end with the `Co-Authored-By` trailer requested by the session; ask before pushing.
-- `.gitignore` excludes `data/` (real database), `.idea/`, `.claude/`, build output. No secrets belong in the repo; the Gmail app password lives only in the environment.
+- `.gitignore` excludes `data/` (real database), `.idea/`, `.claude/`, build output. No secrets belong in the repo; the Gmail address and app password live only in the environment.
 
 ## Ideas not done (owner has not asked for them)
 

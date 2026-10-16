@@ -21,13 +21,17 @@ Gradle is provided by the wrapper; nothing else needs installing.
 
 ## Configuration
 
-The only setting is `MAIL_PASSWORD`, the password of the sending Gmail account (`hsiliev@gmail.com`, a Google [app password](https://support.google.com/accounts/answer/185833?hl=en)). It is used to send password-reset emails.
+Mail is configured with two environment variables, used to send password-reset emails through Gmail:
+
+- `MAIL_USERNAME` – the Gmail address that sends the mail
+- `MAIL_PASSWORD` – its Google [app password](https://support.google.com/accounts/answer/185833?hl=en)
 
 ```bash
+export MAIL_USERNAME='you@gmail.com'
 export MAIL_PASSWORD='xxxx xxxx xxxx xxxx'
 ```
 
-Without it the app still runs, but no mail is sent: reset links are printed to the server log (look for `PASSWORD RESET for`).
+If either is missing the app still runs, but no mail is sent: reset links are printed to the server log (look for `PASSWORD RESET for`).
 
 Everything else is fixed: port 8080, database in `./data/ilios`, the public Open-Meteo endpoints, Gmail SMTP on `smtp.gmail.com:587`, and reset links pointing at `http://localhost:8080`. Change these in the source (`Main.kt`, `Mail.kt`, `Weather.kt`) if needed.
 
