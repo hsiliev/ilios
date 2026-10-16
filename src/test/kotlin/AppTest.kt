@@ -120,9 +120,9 @@ class AppTest {
     }
 
     @Test
-    fun portDefaultsTo8080AndRejectsGarbage() {
-        assertEquals(8080, portFrom(null))
-        assertEquals(8080, portFrom("  "))
+    fun portDefaultsTo8081AndRejectsGarbage() {
+        assertEquals(8081, portFrom(null))
+        assertEquals(8081, portFrom("  "))
         assertEquals(9090, portFrom(" 9090 "))
         for (bad in listOf("abc", "0", "70000", "-1")) {
             val e = runCatching { portFrom(bad) }.exceptionOrNull()

@@ -37,7 +37,7 @@ class Intraday(val now: String, val stepMin: Int, val points: List<IntraPoint>)
 @Serializable
 class Report(
     val id: Long, val name: String, val solar: Boolean = false, val today: String = "", val days: List<DayPoint> = emptyList(),
-    val watering: Watering? = null, val battery: Battery? = null, val intraday: Intraday? = null, val error: String? = null,
+    val watering: Watering? = null, val battery: Battery? = null, val intraday: Intraday? = null, val error: String? = null, val country: String? = null,
 )
 
 private fun r1(x: Double) = round(x * 10) / 10
@@ -106,5 +106,5 @@ fun buildReport(
     val watering = Watering(r1(soFar), r1(expected), advise(crops.getValue("plants")), advise(crops.getValue("grass")), advise(crops.getValue("trees")))
 
     val battery = if (loc.solar && kwp > 0) Battery(plant?.batteryKwh ?: 0.0, plant?.soc, plant?.remainingKwh, plant?.powerW, plant?.readAt) else null
-    return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday)
+    return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday, country = loc.country)
 }

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Updates a deployed Ilios: pulls the repo (skip with --no-pull), rebuilds, redeploys to /opt/ilios/app, restarts the service.
+# The database in /opt/ilios/data is never touched. Run ./scripts/install first.
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALL_DIR=/opt/ilios
+APP_USER=ilios
+
+log() { printf '\033[0;32m[INFO]\033[0m %s\n' "$*"; }
+die() { printf '\033[0;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
+
+[[ -d "$INSTALL_DIR" ]] || die "$INSTALL_DIR not found; run ./scripts/install first"
+cd "$REPO_ROOT"
+
+if [[ "${1:-}" != --no-pull ]]; then
+  log "Pulling changes (branch: $(git rev-parse --abbrev-ref HEAD))"
+  git fetch --all --prune
+  git pull --ff-only || git pull --rebase
+fi
+
+log 'Building'
+./gradlew --no-daemon installDist -x test
+
+log 'Deploying'
+sudo rsync -a --delete "$REPO_ROOT/build/install/ilios/" "$INSTALL_DIR/app/"
+sudo chown -R "$APP_USER:$APP_USER" "$INSTALL_DIR/app"
+
+log 'Restarting the service'
+sudo systemctl restart ilios
+sleep 3
+sudo systemctl is-active --quiet ilios || { sudo journalctl -u ilios -n 30 --no-pager; die 'ilios failed to start'; }
+log 'Update completed successfully.'

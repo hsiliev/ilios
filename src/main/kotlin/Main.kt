@@ -60,10 +60,10 @@ class HttpError(val status: HttpStatusCode, message: String) : Exception(message
 )
 @Serializable class Msg(val message: String)
 
-/** HTTP port from the PORT environment variable; 8080 when unset or blank. A set but invalid value fails fast. */
+/** HTTP port from the PORT environment variable; 8081 when unset or blank. A set but invalid value fails fast. */
 fun portFrom(value: String?): Int {
     val v = value?.trim().orEmpty()
-    if (v.isEmpty()) return 8080
+    if (v.isEmpty()) return 8081
     return v.toIntOrNull()?.takeIf { it in 1..65535 } ?: error("PORT must be a number between 1 and 65535, got '$v'")
 }
 
@@ -232,7 +232,7 @@ fun Application.module() {
                 val reports = locs.map { loc ->
                     val days = weather.days(loc)
                     if (days.isEmpty()) {
-                        Report(loc.id, loc.name, error = "Данните за времето се зареждат – опитайте отново след малко")
+                        Report(loc.id, loc.name, country = loc.country, error = "Данните за времето се зареждат – опитайте отново след малко")
                     } else {
                         val today = LocalDate.now(ZoneId.of(loc.tz))
                         buildReport(

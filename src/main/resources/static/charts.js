@@ -107,7 +107,7 @@ export function powerChart(days,today,cap){
     if(d.produced!=null)p.push(`панели ${num(d.produced)} kWh`);
     else p.push(`${d.date<today?'оценка':'прогноза'} ${num(d.kwh)} kWh`);
     if(d.ac!=null)p.push(`инвертор ${num(d.ac)} kWh`);
-    if(d.maxSoc!=null)p.push(`батерия макс ${num(d.maxSoc,0)}%`);
+    if(d.maxSoc!=null)p.push(`батерия ${num(d.maxSoc,0)}%`);
     return p.join(', ');
   };
   days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit"><title>${tip(d)}</title></rect>`);

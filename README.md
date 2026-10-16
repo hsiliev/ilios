@@ -35,7 +35,7 @@ If either is missing the app still runs, but no mail is sent: reset links are pr
 
 Optional variables:
 
-- `PORT` – HTTP port (default `8080`); reset links in emails point at `http://localhost:<PORT>`.
+- `PORT` – HTTP port (default `8081`); reset links in emails point at `http://localhost:<PORT>`.
 - `SOLAX_URL` – SolaX API host for your account's region (default `https://openapi-eu.solaxcloud.com`; the URL is under "My Account" in the SolaX developer portal).
 
 Everything else is fixed: database in `./data/ilios`, the public Open-Meteo endpoints, Gmail SMTP on `smtp.gmail.com:587`, and the reset-link host (always `localhost`). Change these in the source (`Main.kt`, `Mail.kt`, `Weather.kt`) if needed.
@@ -46,7 +46,7 @@ Everything else is fixed: database in `./data/ilios`, the public Open-Meteo endp
 ./gradlew run
 ```
 
-Open <http://localhost:8080>, create an account, then:
+Open <http://localhost:8081>, create an account, then:
 
 1. Open the settings page (cog icon in the header). At the bottom, under **Ново място**, search for a place (e.g. София, Садовец, Агиос Йоанис Продромос) and click **Добави**. Several places share a name, so check the country and coordinates.
 2. Each place has its own card. Tick **Solax Cloud** for places with a SolaX solar system and enter that place's SolaX **Client ID** and **Client Secret** (see below), then click **Запази**. The panel power and battery capacity are read from SolaX, so they are not settings, and nothing else needs to be set for solar. Places without solar show only the weather charts and watering advice.

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Installs Ilios on Ubuntu: apt packages, service user, /opt/ilios, systemd unit; then builds and starts it.
+# Co-hosts with Hermes (8080) and Photina: own port 8081 and a "ILIOS MANAGED" Caddyfile block, as theirs.
+# Optional: DOMAIN=example.com ./scripts/install  also installs Caddy as an HTTPS reverse proxy for that domain.
+set -Eeuo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_USER=ilios
+INSTALL_DIR=/opt/ilios
+CONF_DIR=/etc/ilios
+UNIT=/etc/systemd/system/ilios.service
+PORT="${PORT:-8081}" # Hermes already uses 8080
+
+log() { printf '\033[0;32m[INFO]\033[0m %s\n' "$*"; }
+die() { printf '\033[0;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
+
+[[ -r /etc/os-release ]] || die 'cannot identify the operating system'
+# shellcheck disable=SC1091
+source /etc/os-release
+[[ "${ID:-}" == ubuntu ]] || die 'this installer supports Ubuntu only'
+command -v sudo >/dev/null || die 'sudo is required'
+
+log 'Installing packages'
+sudo apt-get update
+sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  git curl ca-certificates rsync openjdk-21-jdk-headless
+
+if [[ -n "${DOMAIN:-}" ]]; then
+  if ! apt-cache policy caddy | grep -q '^  Candidate: [^ (]'; then
+    log 'Adding the official Caddy repository'
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y gnupg debian-keyring debian-archive-keyring apt-transport-https
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
+      sudo gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' |
+      sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+    sudo apt-get update
+  fi
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+  log "Configuring Caddy for ${DOMAIN}"
+  # managed block, so blocks of other projects in the same Caddyfile are preserved
+  sudo touch /etc/caddy/Caddyfile
+  sudo sed -i '/^# BEGIN ILIOS MANAGED$/,/^# END ILIOS MANAGED$/d' /etc/caddy/Caddyfile
+  printf '# BEGIN ILIOS MANAGED\n%s {\n    reverse_proxy localhost:%s\n}\n# END ILIOS MANAGED\n' "$DOMAIN" "$PORT" | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+  sudo systemctl reload caddy || sudo systemctl restart caddy
+fi
+
+log 'Provisioning user and directories'
+id -u "$APP_USER" >/dev/null 2>&1 || sudo useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$APP_USER"
+sudo install -d -o "$APP_USER" -g "$APP_USER" -m 0755 "$INSTALL_DIR" "$INSTALL_DIR/data"
+sudo install -d -m 0755 "$CONF_DIR"
+if [[ ! -e "$CONF_DIR/ilios.env" ]]; then
+  log "Creating $CONF_DIR/ilios.env (set MAIL_USERNAME / MAIL_PASSWORD there to send mail)"
+  printf 'PORT=%s\n# SOLAX_URL=\n# MAIL_USERNAME=\n# MAIL_PASSWORD=\n# JAVA_OPTS=-Xmx512m\n' "$PORT" | sudo tee "$CONF_DIR/ilios.env" >/dev/null
+  sudo chmod 0640 "$CONF_DIR/ilios.env"; sudo chown root:"$APP_USER" "$CONF_DIR/ilios.env"
+fi
+
+log 'Installing the systemd unit'
+sudo tee "$UNIT" >/dev/null <<UNITEOF
+[Unit]
+Description=Ilios - solar and weather advisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$APP_USER
+Group=$APP_USER
+# the database lives in ./data relative to this directory
+WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=-$CONF_DIR/ilios.env
+Environment=JAVA_OPTS=-Xms128m -Xmx512m
+ExecStart=$INSTALL_DIR/app/bin/ilios
+Restart=on-failure
+RestartSec=5s
+SyslogIdentifier=ilios
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+sudo systemctl daemon-reload
+sudo systemctl enable ilios
+
+"$REPO_ROOT/scripts/update" --no-pull
+log "Ilios is installed. Logs: journalctl -u ilios -f"

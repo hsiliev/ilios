@@ -84,10 +84,10 @@ private class IntraArrays(
 
 class Day(val date: LocalDate, val tMax: Double?, val tMin: Double?, val rainMm: Double, val radiationMj: Double)
 
-class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean)
+class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean, val country: String? = null)
 
 fun locOf(r: ResultRow) = Loc(
-    r[Locations.id], r[Locations.name], r[Locations.lat], r[Locations.lon], r[Locations.tz], r[Locations.solar],
+    r[Locations.id], r[Locations.name], r[Locations.lat], r[Locations.lon], r[Locations.tz], r[Locations.solar], r[Locations.country],
 )
 
 fun newHttpClient(json: Json) = HttpClient(CIO) {

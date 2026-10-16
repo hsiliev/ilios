@@ -37,7 +37,7 @@ function placeSummary(r){
   const day=r.days.find(d=>d.date===r.today),tom=r.days.find(d=>d.date>r.today),w=r.watering,b=r.battery;
   const chip=(title,...k)=>h('span',{cls:'chip',title,'aria-label':title},...k);
   const crops=[['plants','Растения'],['grass','Трева'],['trees','Дървета']];
-  return h('summary',{},svg(ICONS.chev,'chev sm'),h('h2',{},r.name),
+  return h('summary',{},svg(ICONS.chev,'chev sm'),h('h2',{},r.name,r.country?[' ',h('span',{cls:'mut'},r.country)]:''),
     h('span',{cls:'chips'},
       day&&chip('Днес: макс. '+f1(day.tMax)+'°C, мин. '+f1(day.tMin)+'°C',h('b',{},f1(day.tMax,0)+'°'),h('span',{cls:'mut'},' / '+f1(day.tMin,0)+'°')),
       day&&chip('Валеж днес: '+f1(day.rainMm)+' мм',svg(ICONS.rain,'rain sm'),f1(day.rainMm)+' мм'),
@@ -49,7 +49,7 @@ function placeSummary(r){
 }
 
 function reportCard(r,i,state){
-  if(r.error)return h('div',{cls:'card'},h('h2',{},r.name),h('div',{cls:'yes'},r.error));
+  if(r.error)return h('div',{cls:'card'},h('h2',{},r.name,r.country?[' ',h('span',{cls:'mut'},r.country)]:''),h('div',{cls:'yes'},r.error));
   const b=r.battery,html=(t,s)=>{const d=h('div');d.innerHTML=s;return t?[h('h3',{},t),d]:[d]};
   return h('details',{cls:'card place',open:state[r.id]??i===0,      ontoggle:e=>{const st=readOpen();st[r.id]=e.target.open;localStorage.setItem(OPEN_KEY,JSON.stringify(st))}},
     placeSummary(r),
