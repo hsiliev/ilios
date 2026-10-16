@@ -12,12 +12,20 @@ class Advice(val water: String, val text: String) // water: "yes" | "light" | "n
 @Serializable
 class Watering(val rainSoFarMm: Double, val rainExpectedMm: Double, val plants: Advice, val grass: Advice, val trees: Advice)
 
+/** batteryKwh is 0 when the plant has no battery (or SolaX does not report one). */
 @Serializable
-class Battery(val batteryKwh: Double)
+class Battery(
+    val batteryKwh: Double, val soc: Double? = null, val remainingKwh: Double? = null,
+    val powerW: Double? = null, val readAt: Long? = null, // charge state at the last SolaX sync; power > 0 = charging
+)
 
-/** One day of the three-week window (previous, current and next week). kwh is the estimated solar yield. */
+/** One day of the three-week window (previous, current and next week). kwh is the estimated solar yield; produced is SolaX's measured yield when connected. */
 @Serializable
-class DayPoint(val date: String, val tMax: Double?, val tMin: Double?, val rainMm: Double, val kwh: Double)
+class DayPoint(
+    val date: String, val tMax: Double?, val tMin: Double?, val rainMm: Double, val kwh: Double,
+    val produced: Double? = null, val ac: Double? = null, // ac: inverter AC output of that day, for comparison with the SolaX app
+    val maxSoc: Double? = null, // highest battery charge (%) a past day reached, from SolaX's battery history
+)
 
 /** One step of today's forecast at the finest resolution Open-Meteo offers. event: thunder | snow | rain | wind | cloud */
 @Serializable
@@ -28,7 +36,7 @@ class Intraday(val now: String, val stepMin: Int, val points: List<IntraPoint>)
 
 @Serializable
 class Report(
-    val id: Long, val name: String, val today: String = "", val days: List<DayPoint> = emptyList(),
+    val id: Long, val name: String, val solar: Boolean = false, val today: String = "", val days: List<DayPoint> = emptyList(),
     val watering: Watering? = null, val battery: Battery? = null, val intraday: Intraday? = null, val error: String? = null,
 )
 
@@ -42,15 +50,39 @@ private class Crop(val needMm: Double, val carry: Double)
 
 private val crops = mapOf("plants" to Crop(20.0, 0.5), "grass" to Crop(25.0, 0.5), "trees" to Crop(15.0, 1.0))
 
+/** Yield assumed until enough measured days exist: the share of the ideal radiation-based yield a system typically delivers. */
+const val DEFAULT_RATIO = 0.75
+private const val MIN_CALIBRATION_DAYS = 3
+
+/**
+ * The share of the ideal yield (`kWp × radiation`) the system really delivered, from past days with measured production.
+ * Falls back to [DEFAULT_RATIO] with fewer than three usable days, and is kept within 0.3–1.0 so that one odd period cannot
+ * produce an absurd forecast. Days with no production or no radiation are ignored (outage, missing data).
+ */
+fun calibratedRatio(days: List<Day>, produced: Map<LocalDate, Double>, kwp: Double, today: LocalDate): Double {
+    if (kwp <= 0) return DEFAULT_RATIO
+    var real = 0.0; var ideal = 0.0; var n = 0
+    for (d in days) {
+        val p = produced[d.date] ?: continue
+        if (d.date >= today || p <= 0 || d.radiationMj <= 0) continue
+        real += p; ideal += kwp * d.radiationMj / 3.6; n++
+    }
+    return if (n >= MIN_CALIBRATION_DAYS && ideal > 0) (real / ideal).coerceIn(0.3, 1.0) else DEFAULT_RATIO
+}
+
 fun solarKwh(d: Day, kwp: Double, ratio: Double) = kwp * (d.radiationMj / 3.6) * ratio // MJ/m² -> kWh/m² = peak sun hours
 
-fun buildReport(loc: Loc, days: List<Day>, today: LocalDate, intraday: Intraday?): Report {
-    val kwp = loc.kwp
-    val ratio = loc.ratio
+fun buildReport(
+    loc: Loc, days: List<Day>, today: LocalDate, intraday: Intraday?,
+    produced: Map<LocalDate, Double> = emptyMap(), plant: SolaxPlant? = null, ac: Map<LocalDate, Double> = emptyMap(),
+    maxSoc: Map<LocalDate, Double> = emptyMap(),
+): Report {
+    val kwp = plant?.kwp ?: 0.0 // installed PV power comes from SolaX; without it there is no estimate
+    val ratio = calibratedRatio(days, produced, kwp, today)
     val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     fun range(from: LocalDate, to: LocalDate) = days.filter { it.date in from..to }
     val points = range(monday.minusDays(7), monday.plusDays(13)).map {
-        DayPoint(it.date.toString(), it.tMax, it.tMin, r1(it.rainMm), r1(solarKwh(it, kwp, ratio)))
+        DayPoint(it.date.toString(), it.tMax, it.tMin, r1(it.rainMm), r1(solarKwh(it, kwp, ratio)), produced[it.date]?.let(::r1), ac[it.date]?.let(::r1), maxSoc[it.date]?.let(::r1))
     }
 
     // Rain: accumulated from the start of last week through today vs. expected from tomorrow to the end of next week.
@@ -73,5 +105,6 @@ fun buildReport(loc: Loc, days: List<Day>, today: LocalDate, intraday: Intraday?
     }
     val watering = Watering(r1(soFar), r1(expected), advise(crops.getValue("plants")), advise(crops.getValue("grass")), advise(crops.getValue("trees")))
 
-    return Report(loc.id, loc.name, today.toString(), points, watering, if (loc.solar) Battery(loc.batteryKwh) else null, intraday)
+    val battery = if (loc.solar && kwp > 0) Battery(plant?.batteryKwh ?: 0.0, plant?.soc, plant?.remainingKwh, plant?.powerW, plant?.readAt) else null
+    return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday)
 }

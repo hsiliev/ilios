@@ -28,6 +28,7 @@ dependencies {
     implementation("org.slf4j:slf4j-simple:2.0.17")
 
     testImplementation("io.ktor:ktor-server-test-host:$ktor")
+    testImplementation("io.ktor:ktor-client-mock:$ktor")
     testImplementation(kotlin("test"))
 }
 

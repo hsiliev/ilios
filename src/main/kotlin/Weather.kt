@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -22,15 +23,21 @@ import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.max
 import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
+import java.time.Instant
+import java.time.DayOfWeek
+import java.time.temporal.TemporalAdjusters
 import java.time.LocalDate
 import kotlin.time.Duration.Companion.minutes
 import java.time.ZoneId
 import java.time.ZonedDateTime
 
+private const val GEOCODE_CACHE_MS = 30L * 24 * 60 * 60 * 1000
+private val json = Json { ignoreUnknownKeys = true }
 private const val REFRESH_AFTER_MS = 3L * 60 * 60 * 1000 // data older than this is refetched
 private val CHECK_EVERY = 10.minutes
 const val PAST_DAYS = 14
@@ -77,12 +84,10 @@ private class IntraArrays(
 
 class Day(val date: LocalDate, val tMax: Double?, val tMin: Double?, val rainMm: Double, val radiationMj: Double)
 
-class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean,
-          val batteryKwh: Double, val kwp: Double, val ratio: Double)
+class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean)
 
 fun locOf(r: ResultRow) = Loc(
     r[Locations.id], r[Locations.name], r[Locations.lat], r[Locations.lon], r[Locations.tz], r[Locations.solar],
-    r[Locations.batteryKwh], r[Locations.solarKwp], r[Locations.pvRatio],
 )
 
 fun newHttpClient(json: Json) = HttpClient(CIO) {
@@ -95,13 +100,29 @@ fun newHttpClient(json: Json) = HttpClient(CIO) {
  * Reads weather only from the database. A background loop (see [refreshLoop]) fills it from Open-Meteo:
  * on start-up and then whenever a place's data is older than three hours. Places are also fetched when added.
  */
-class WeatherService(private val http: HttpClient) {
+class WeatherService(
+    private val http: HttpClient,
+    private val forecastUrl: String = "https://api.open-meteo.com",
+    private val geocodingUrl: String = "https://geocoding-api.open-meteo.com",
+) {
     private val lock = Mutex() // one refresh at a time
 
-    suspend fun geocode(query: String): List<GeoHit> =
-        http.get("https://geocoding-api.open-meteo.com/v1/search") {
+    /** Place search. Results hardly ever change, so they are kept in the database and a repeated search makes no request. */
+    suspend fun geocode(query: String, now: Instant = Instant.now()): List<GeoHit> {
+        val key = query.trim().lowercase().take(120)
+        transaction { GeocodeCache.selectAll().where { GeocodeCache.query eq key }.singleOrNull() }
+            ?.takeIf { it[GeocodeCache.fetchedAt] > now.toEpochMilli() - GEOCODE_CACHE_MS }
+            ?.let { cached -> runCatching { return json.decodeFromString(ListSerializer(GeoHit.serializer()), cached[GeocodeCache.json]) } }
+        val hits = http.get("$geocodingUrl/v1/search") {
             parameter("name", query); parameter("count", 8); parameter("language", "bg"); parameter("format", "json")
         }.body<GeoResp>().results
+        val stored = json.encodeToString(ListSerializer(GeoHit.serializer()), hits)
+        transaction {
+            GeocodeCache.deleteWhere { GeocodeCache.query eq key }
+            GeocodeCache.insert { it[GeocodeCache.query] = key; it[GeocodeCache.json] = stored; it[GeocodeCache.fetchedAt] = now.toEpochMilli() }
+        }
+        return hits
+    }
 
     // ---- reads (database only) ----
 
@@ -159,10 +180,19 @@ class WeatherService(private val http: HttpClient) {
 
     /** Fetches daily data and today's 15-minute steps. Daily rows before today are kept; today and later are replaced. */
     suspend fun refresh(loc: Loc) = lock.withLock {
-        val r = http.get("https://api.open-meteo.com/v1/forecast") {
+        // Past days are stored once and never replaced, so ask for them only when some are missing (a new place, or a gap):
+        // otherwise today and the next two weeks are enough, which also costs less of Open-Meteo's weighted call allowance.
+        val zone = ZoneId.of(loc.tz)
+        val today0 = LocalDate.now(zone)
+        val windowStart = today0.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).minusDays(7)
+        val stored = transaction { Daily.select(Daily.day).where { Daily.locationId eq loc.id }.map { it[Daily.day] }.toSet() }
+        val firstMissing = generateSequence(windowStart) { it.plusDays(1) }.takeWhile { it < today0 }.firstOrNull { it.toString() !in stored }
+        val pastDays = if (firstMissing == null) 0 else (today0.toEpochDay() - firstMissing.toEpochDay()).toInt().coerceIn(1, PAST_DAYS)
+        val r = http.get("$forecastUrl/v1/forecast") {
             parameter("latitude", loc.lat); parameter("longitude", loc.lon)
             parameter("daily", "temperature_2m_max,temperature_2m_min,precipitation_sum,shortwave_radiation_sum")
-            parameter("past_days", PAST_DAYS); parameter("forecast_days", FUTURE_DAYS)
+            if (pastDays > 0) parameter("past_days", pastDays)
+            parameter("forecast_days", FUTURE_DAYS)
             parameter("timezone", "auto")
         }.body<ForecastResp>()
         val d = r.daily
@@ -193,7 +223,7 @@ class WeatherService(private val http: HttpClient) {
 
     /** 15-minute steps are Open-Meteo's finest resolution (interpolated from hourly data outside its high-resolution regions). */
     private suspend fun refreshIntraday(loc: Loc) {
-        val r = http.get("https://api.open-meteo.com/v1/forecast") {
+        val r = http.get("$forecastUrl/v1/forecast") {
             parameter("latitude", loc.lat); parameter("longitude", loc.lon)
             parameter("minutely_15", "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_gusts_10m")
             parameter("forecast_days", 3); parameter("timezone", "auto") // a few days so "today" survives past midnight until the next refresh

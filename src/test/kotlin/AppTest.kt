@@ -28,7 +28,7 @@ import kotlin.test.assertNotNull
 /** Runs the real app in-process against a throwaway H2 file: no port, no network, nothing of the real data. */
 class AppTest {
     private fun app(block: suspend ApplicationTestBuilder.() -> Unit) {
-        initDb(Files.createTempDirectory("ilios-test").resolve("db").toString())
+        initDb(tempDbPath())
         testApplication {
             application { module() }
             block()

@@ -4,7 +4,6 @@ import org.jetbrains.exposed.v1.core.ReferenceOption
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.SchemaUtils
-import org.jetbrains.exposed.v1.jdbc.exists
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 /** Users. */
@@ -33,10 +32,65 @@ object Locations : Table("locations") {
     val lon = double("lon")
     val tz = varchar("tz", 60).default("UTC")
     val solar = bool("solar").default(false) // whether a solar system applies here
-    val batteryKwh = double("battery_kwh").default(10.0)
-    val solarKwp = double("solar_kwp").default(5.0)
-    val pvRatio = double("pv_ratio").default(0.75) // system losses / performance ratio
     override val primaryKey = PrimaryKey(id)
+}
+
+/** SolaX Cloud connection of a place: API credentials, discovered plant, cached token and sync state. */
+object Solax : Table("solax") {
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
+    val clientId = varchar("client_id", 100)
+    val clientSecret = varchar("client_secret", 200) // needed to call the API, so stored as given; protect the database file
+    val plantId = varchar("plant_id", 40).nullable() // the selected plant: the first one by default, changeable in the settings
+    val plants = varchar("plants", 4000).nullable() // JSON list of the account's plants (id and name) for the dropdown
+    val plantName = varchar("plant_name", 120).nullable()
+    val businessType = integer("business_type").nullable() // SolaX: 1 residential, 4 commercial & industrial
+    val pvKwp = double("pv_kwp").nullable() // installed PV power of the plant, from SolaX
+    val batteryKwh = double("battery_kwh").nullable() // installed battery capacity of the plant, from SolaX
+    val diagDevices = varchar("diag_devices", 1500).nullable() // raw device-list answer, kept only when it gave no capacity (no credentials in it)
+    val diagHistory = varchar("diag_history", 1500).nullable() // raw battery-history answer, kept only when it gave no usable capacity
+    val batteryDeviceKwh = double("battery_device_kwh").nullable() // sum of the battery devices' own rated capacity (device list)
+    val plantReadAt = long("plant_read_at").nullable() // when the plant record (name, kWp, battery kWh) was last read
+    val inverterSns = varchar("inverter_sns", 200).nullable() // comma-separated serials, cached to save API calls
+    val soc = double("soc").nullable() // battery state of charge, %, at the last sync
+    val batteryRemainingKwh = double("battery_remaining_kwh").nullable()
+    val batteryPowerW = double("battery_power_w").nullable() // positive = charging, negative = discharging
+    val batteryReadAt = long("battery_read_at").nullable() // epoch millis of that reading
+    val batteryDaysThrough = varchar("battery_days_through", 10).nullable() // last day whose battery history was fetched
+    val historyTryAt = long("history_try_at").nullable() // last failed history attempt, so it is retried at most hourly
+    val batteryTryAt = long("battery_try_at").nullable() // last attempt, so failures are retried only hourly
+    val batteryStatus = varchar("battery_status", 200).nullable() // user-visible outcome of the last battery read
+    val token = varchar("token", 200).nullable()
+    val tokenExpires = long("token_expires").default(0)
+    val status = varchar("status", 400).default("")
+    val producedThrough = varchar("produced_through", 10).nullable() // last day whose production was fetched; days are fetched once
+    val dueAt = long("due_at").default(0) // retry gate: a failed production sync waits until then
+    override val primaryKey = PrimaryKey(locationId)
+}
+
+/** Energy produced per day as reported by SolaX (kWh). */
+object Produced : Table("produced") {
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
+    val day = varchar("day", 10) // ISO date
+    val kwh = double("kwh") // PV generation: what the panels produced
+    val acKwh = double("ac_kwh").nullable() // inverter AC output (the SolaX app's "Inverter Output"), kept to compare with kwh
+    override val primaryKey = PrimaryKey(locationId, day)
+}
+
+/** Place-search results (Open-Meteo geocoding) by normalised query, so a repeated search needs no new request. */
+object GeocodeCache : Table("geocode_cache") {
+    val query = varchar("query", 120)
+    val json = text("json")
+    val fetchedAt = long("fetched_at")
+    override val primaryKey = PrimaryKey(query)
+}
+
+/** The highest battery charge (%) a past day reached, from SolaX's battery history; fetched once per day. */
+object BatteryDays : Table("battery_days") {
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
+    val day = varchar("day", 10) // ISO date
+    val maxSoc = double("max_soc")
+    val usableKwh = double("usable_kwh").nullable() // usable capacity that day: remaining energy / charge, from the history points
+    override val primaryKey = PrimaryKey(locationId, day)
 }
 
 /** Stored 15-minute forecast steps (today and the next days); replaced on every refresh. */
@@ -65,23 +119,18 @@ object Daily : Table("daily") {
 fun initDb(path: String) {
     Database.connect("jdbc:h2:file:$path;DB_CLOSE_DELAY=-1", "org.h2.Driver")
     transaction {
-        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15)
-        migrateUserSettings()
+        // days stored before the AC column existed are fetched again once
+        val hadAc = runCatching { exec("SELECT ac_kwh FROM produced WHERE 1 = 0") }.isSuccess
+        // connected places read the battery devices' capacity together with the plant record: do that once after the upgrade
+        val hadDeviceKwh = runCatching { exec("SELECT battery_device_kwh FROM solax WHERE 1 = 0") }.isSuccess
+        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, GeocodeCache)
+        if (!hadAc) exec("UPDATE solax SET produced_through = NULL")
+        if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")
+        // obsolete: the old per-user settings table and the typed-in performance ratio (now calibrated from SolaX data)
+        exec("DROP TABLE IF EXISTS settings")
+        exec("ALTER TABLE locations DROP COLUMN IF EXISTS pv_ratio")
+        // battery capacity and PV power now come from SolaX instead of being typed in
+        exec("ALTER TABLE locations DROP COLUMN IF EXISTS battery_kwh")
+        exec("ALTER TABLE locations DROP COLUMN IF EXISTS solar_kwp")
     }
-}
-
-private object OldSettings : Table("settings") {
-    val userId = long("user_id")
-}
-
-/** Energy settings used to be per user; copy them onto that user's places, then drop the old table. */
-private fun org.jetbrains.exposed.v1.jdbc.JdbcTransaction.migrateUserSettings() {
-    if (!OldSettings.exists()) return
-    exec(
-        "UPDATE locations l SET battery_kwh = (SELECT s.battery_kwh FROM settings s WHERE s.user_id = l.user_id), " +
-            "solar_kwp = (SELECT s.solar_kwp FROM settings s WHERE s.user_id = l.user_id), " +
-            "pv_ratio = (SELECT s.pv_ratio FROM settings s WHERE s.user_id = l.user_id) " +
-            "WHERE EXISTS (SELECT 1 FROM settings s WHERE s.user_id = l.user_id)",
-    )
-    exec("DROP TABLE settings")
 }

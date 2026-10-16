@@ -17,6 +17,7 @@ import io.ktor.server.http.content.staticResources
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
@@ -38,6 +39,7 @@ private val appModule = module {
     single { AuthService() }
     single { Mailer() }
     single { WeatherService(get()) }
+    single { SolaxService(get()) }
 }
 
 class HttpError(val status: HttpStatusCode, message: String) : Exception(message)
@@ -47,8 +49,15 @@ class HttpError(val status: HttpStatusCode, message: String) : Exception(message
 @Serializable class ResetReq(val token: String = "", val password: String = "")
 @Serializable class Me(val email: String)
 @Serializable class NewLocation(val name: String = "", val country: String? = null, val lat: Double = 0.0, val lon: Double = 0.0, val tz: String? = null)
-@Serializable class PlaceSettings(val solar: Boolean, val batteryKwh: Double, val solarKwp: Double, val pvRatio: Double)
-@Serializable class LocationOut(val id: Long, val name: String, val country: String?, val solar: Boolean, val batteryKwh: Double, val solarKwp: Double, val pvRatio: Double)
+@Serializable class PlaceSettings(
+    val solar: Boolean,
+    val solaxClientId: String = "", val solaxClientSecret: String = "", val solaxPlantId: String = "",
+)
+@Serializable class LocationOut(
+    val id: Long, val name: String, val country: String?, val solar: Boolean,
+    val solaxClientId: String = "", val solaxPlantId: String = "", val solaxHasSecret: Boolean = false, val solaxStatus: String = "",
+    val solaxBatteryStatus: String = "", val solaxBatteryInfo: String = "", val solaxPlants: List<PlantOption> = emptyList(), // the secret is never sent back
+)
 @Serializable class Msg(val message: String)
 
 /** HTTP port from the PORT environment variable; 8080 when unset or blank. A set but invalid value fails fast. */
@@ -72,6 +81,11 @@ fun main() {
     embeddedServer(CIO, port = PORT, host = "0.0.0.0", module = Application::module).start(wait = true)
 }
 
+private fun locationOut(r: ResultRow, info: SolaxInfo?) = LocationOut(
+    r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar],
+    info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(), info?.batteryStatus.orEmpty(), info?.batteryInfo.orEmpty(), info?.plants.orEmpty(),
+)
+
 fun Application.module() {
     install(Koin) { modules(appModule) }
     install(ContentNegotiation) { json(json) }
@@ -85,6 +99,7 @@ fun Application.module() {
     }
     val auth by inject<AuthService>()
     val weather by inject<WeatherService>()
+    val solax by inject<SolaxService>()
     val mailer by inject<Mailer>()
 
     fun ApplicationCall.userId(): Long =
@@ -95,6 +110,7 @@ fun Application.module() {
     )
 
     launch { weather.refreshLoop() }
+    launch { solax.syncLoop() }
 
     routing {
         staticResources("/", "static")
@@ -154,11 +170,9 @@ fun Application.module() {
 
             get("/locations") {
                 val id = call.userId()
-                call.respond(transaction {
-                    Locations.selectAll().where { Locations.userId eq id }.orderBy(Locations.id).map {
-                        LocationOut(it[Locations.id], it[Locations.name], it[Locations.country], it[Locations.solar], it[Locations.batteryKwh], it[Locations.solarKwp], it[Locations.pvRatio])
-                    }
-                })
+                val rows = transaction { Locations.selectAll().where { Locations.userId eq id }.orderBy(Locations.id).toList() }
+                val infos = solax.infos(rows.map { it[Locations.id] })
+                call.respond(rows.map { locationOut(it, infos[it[Locations.id]]) })
             }
             post("/locations") {
                 val id = call.userId()
@@ -175,21 +189,35 @@ fun Application.module() {
                     }[Locations.id]
                 }
                 // fill the database right away; if Open-Meteo is unreachable the background loop retries
-                runCatching { weather.refresh(Loc(newId, name, l.lat, l.lon, tz, false, 10.0, 5.0, 0.75)) }
+                runCatching { weather.refresh(Loc(newId, name, l.lat, l.lon, tz, false)) }
                     .onFailure { call.application.environment.log.warn("Initial fetch failed for $name: ${it.message}") }
-                call.respond(HttpStatusCode.Created, LocationOut(newId, name, l.country, false, 10.0, 5.0, 0.75))
+                call.respond(HttpStatusCode.Created, LocationOut(newId, name, l.country, false))
             }
             put("/locations/{id}") {
                 val uid = call.userId()
                 val lid = call.parameters["id"]?.toLongOrNull() ?: badRequest("Невалиден идентификатор")
                 val p = call.receive<PlaceSettings>()
-                if (p.batteryKwh !in 0.0..1000.0 || p.solarKwp !in 0.0..1000.0 || p.pvRatio !in 0.1..1.0) badRequest("Стойността е извън допустимите граници")
-                transaction {
+                val updated = transaction {
                     Locations.update({ (Locations.id eq lid) and (Locations.userId eq uid) }) {
-                        it[solar] = p.solar; it[batteryKwh] = p.batteryKwh; it[solarKwp] = p.solarKwp; it[pvRatio] = p.pvRatio
+                        it[solar] = p.solar
                     }
                 }
-                call.respond(Msg("Запазено"))
+                if (updated == 0) throw HttpError(HttpStatusCode.NotFound, "Няма такова място")
+                val changed = solax.configure(lid, p.solaxClientId, p.solaxClientSecret, p.solaxPlantId)
+                val loc = transaction { Locations.selectAll().where { Locations.id eq lid }.single() }
+                if (changed && p.solar) { // neither call throws; the outcomes end up in the status texts
+                    solax.sync(locOf(loc))
+                    solax.readBatteryIfDue(locOf(loc)) // first reading right after connecting, then daily at 22:30 Sofia time
+                }
+                call.respond(locationOut(loc, solax.infos(listOf(lid))[lid]))
+            }
+            post("/locations/{id}/refresh") {
+                val uid = call.userId()
+                val lid = call.parameters["id"]?.toLongOrNull() ?: badRequest("Невалиден идентификатор")
+                val loc = transaction { Locations.selectAll().where { (Locations.id eq lid) and (Locations.userId eq uid) }.singleOrNull() }
+                    ?: throw HttpError(HttpStatusCode.NotFound, "Няма такова място")
+                if (loc[Locations.solar]) solax.refresh(locOf(loc))
+                call.respond(locationOut(loc, solax.infos(listOf(lid))[lid]))
             }
             delete("/locations/{id}") {
                 val uid = call.userId()
@@ -207,7 +235,12 @@ fun Application.module() {
                         Report(loc.id, loc.name, error = "Данните за времето се зареждат – опитайте отново след малко")
                     } else {
                         val today = LocalDate.now(ZoneId.of(loc.tz))
-                        buildReport(loc, days, today, weather.intraday(loc, today))
+                        buildReport(
+                            loc, days, today, weather.intraday(loc, today),
+                            if (loc.solar) solax.produced(loc.id) else emptyMap(), if (loc.solar) solax.plant(loc.id) else null,
+                            if (loc.solar) solax.producedAc(loc.id) else emptyMap(),
+                            if (loc.solar) solax.batteryDays(loc.id) else emptyMap(),
+                        )
                     }
                 }
                 call.respond(reports)

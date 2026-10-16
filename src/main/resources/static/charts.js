@@ -78,19 +78,39 @@ export function intraChart(it){
 
 export function powerChart(days,today,cap){
   const W=900,H=346,L=52,R=16,T=66,B=44,iw=W-L-R,ih=H-T-B,step=iw/days.length;
-  const max=Math.max(cap,...days.map(d=>d.kwh))*1.12,ticks=5,tstep=stepFor(max,ticks,[1,2,5,10,20,50,100,200,500,1000]);
+  const max=Math.max(cap,...days.map(d=>Math.max(d.kwh,d.produced??0)),1)*1.12,ticks=5,tstep=stepFor(max,ticks,[1,2,5,10,20,50,100,200,500,1000]);
   const y=v=>T+ih-v/(tstep*ticks)*ih,cx=i=>L+step*(i+.5);
   let o='';
   for(let k=0;k<=ticks;k++){const yy=T+ih-k*ih/ticks;o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${num(k*tstep,0)}</text>`}
   o+=`<text transform="translate(12 ${T+ih/2}) rotate(-90)" class="tx" text-anchor="middle">Дневно производство (kWh)</text>`;
   o+=weekFrame(days,today,L,T,iw,ih,step);
-  days.forEach((d,i)=>{const bw=step*.62;
-    if(d.kwh>0)o+=`<rect x="${cx(i)-bw/2}" y="${y(d.kwh)}" width="${bw}" height="${T+ih-y(d.kwh)}" rx="2" class="${d.date>=today?'kfc':'kprod'}"/>`;
-    const full=d.kwh>=cap;  // can the sun alone fill the battery that day? (icon row above the plot, like the weather events)
-    o+=`<svg x="${cx(i)-9}" y="${T-44}" width="18" height="18" viewBox="0 0 24 24" class="ev ${full?'okc':'nox'}"><title>Батерията ${full?'може':'не може'} да се зареди напълно от слънцето</title>${ICONS[full?'yes_':'no_']}</svg>`});
+  // solid bars = panel output measured by SolaX for past days (fetched once each); pale bars = solar forecast, today included.
+  const measured=d=>d.date<today&&d.produced!=null,val=d=>measured(d)?d.produced:d.kwh;
+  const measuredCharge=d=>d.date<today&&d.maxSoc!=null,reached=d=>d.maxSoc>=99; // 99: chargers often stop a hair below 100
+  const fullFor=d=>measuredCharge(d)?reached(d):val(d)>=cap;
+  const noData=d=>d.date<today&&!measuredCharge(d);
+  const chargeText=d=>measuredCharge(d)?`батерия ${num(d.maxSoc,0)}%`
+    :noData(d)?'няма данни за батерията'
+    :val(d)>=cap?'батерия 100%':'батерия под 100%';
+  const bar=(i,v,cls)=>{const bw=step*.62;return v>0?`<rect x="${cx(i)-bw/2}" y="${y(v)}" width="${bw}" height="${T+ih-y(v)}" rx="2" class="${cls}"/>`:''};
+  days.forEach((d,i)=>{
+    o+=bar(i,val(d),measured(d)?'kprod':'kfc');
+    // icon row above the plot: for a past day, did the battery really reach 100 % (nothing until its history is fetched)? For today
+    // and the future, can the sun alone fill it, judged from the forecast
+    const full=fullFor(d);
+    if(cap>0)o+=noData(d)?`<svg x="${cx(i)-9}" y="${T-44}" width="18" height="18" viewBox="0 0 24 24" class="ev"><title>${chargeText(d)}</title><line x1="7" y1="12" x2="17" y2="12"/></svg>`
+      :`<svg x="${cx(i)-9}" y="${T-44}" width="18" height="18" viewBox="0 0 24 24" class="ev ${full?'okc':'nox'}"><title>${chargeText(d)}</title>${ICONS[full?'yes_':'no_']}</svg>`});
   const wave=`M${L} ${y(cap)}`+' q4 -2.5 8 0'+' t8 0'.repeat(Math.floor(iw/8)-1);
-  o+=`<path d="${wave}" class="capw"/><text x="${L+iw-4}" y="${y(cap)-7}" class="tx halo" text-anchor="end">капацитет на батерията ${num(cap)} kWh</text>`;
-  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit"><title>${dmy(d.date)} (${wdOf(d.date)}): ${num(d.kwh)} kWh ${d.date>=today?'(прогноза)':'(оценка)'} – батерията ${d.kwh>=cap?'може':'не може'} да се зареди напълно от слънцето</title></rect>`);
+  if(cap>0)o+=`<path d="${wave}" class="capw"/><text x="${L+iw-4}" y="${y(cap)-7}" class="tx halo" text-anchor="end">капацитет на батерията ${num(cap)} kWh</text>`;
+  const tip=d=>{
+    const p=[];
+    if(d.produced!=null)p.push(`панели ${num(d.produced)} kWh`);
+    else p.push(`${d.date<today?'оценка':'прогноза'} ${num(d.kwh)} kWh`);
+    if(d.ac!=null)p.push(`инвертор ${num(d.ac)} kWh`);
+    if(d.maxSoc!=null)p.push(`батерия макс ${num(d.maxSoc,0)}%`);
+    return p.join(', ');
+  };
+  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit"><title>${tip(d)}</title></rect>`);
   return shell(W,H,'Слънчево производство и състояние на батерията',o);
 }
 
