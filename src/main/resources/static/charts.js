@@ -1,0 +1,96 @@
+import {f1,dm,dmy,ICONS} from './util.js';
+
+// ---------- charts (hand-rolled SVG; values only, no user text goes into the markup) ----------
+const WD=['нд','пн','вт','ср','чт','пт','сб'],wdOf=iso=>WD[new Date(iso+'T12:00:00').getDay()];
+Object.assign(ICONS,{
+  cloud:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
+  wind:'<path d="M9.6 4.6A2 2 0 1 1 11 8H2m10.6 11.4A2 2 0 1 0 14 16H2m15.7-8.3A2.5 2.5 0 1 1 19.5 12H2"/>',
+  thunder:'<path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 9"/><polyline points="13 11 9 17 15 17 11 23"/>',
+  yes_:'<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+  no_:'<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
+  snow:'<line x1="12" y1="2" x2="12" y2="22"/><line x1="4" y1="7" x2="20" y2="17"/><line x1="20" y1="7" x2="4" y2="17"/>',
+});
+const EVENTS={thunder:'Гръмотевична буря',snow:'Сняг',rain:'Дъжд',wind:'Силен вятър',cloud:'Облачно'};
+const num=(x,d=1)=>f1(x,d);
+const tempScale=(vals,headroom)=>{const mn=Math.min(...vals),mx=Math.max(...vals)+headroom;
+  const tstep=[1,2,5,10].find(s=>Math.ceil(mx/s)-Math.floor(mn/s)<=7)||20;
+  const lo=Math.floor(mn/tstep)*tstep,hi=Math.ceil(mx/tstep)*tstep;return{lo,hi,tstep,ticks:(hi-lo)/tstep}};
+const stepFor=(max,ticks,cands)=>cands.find(s=>s*ticks>=max)||cands[cands.length-1];
+const legend=items=>'<div class="legend">'+items.map(([sw,t])=>`<span>${sw}${t}</span>`).join('')+'</div>';
+const sw=(cls,style='')=>`<i class="sw ${cls}" style="${style}"></i>`;
+const evIcon=(ev,x,y,s)=>`<svg x="${x}" y="${y}" width="${s}" height="${s}" viewBox="0 0 24 24" class="ev ${ev}"><title>${EVENTS[ev]}</title>${ICONS[ev==='rain'?'rain':ev]}</svg>`;
+const shell=(W,H,label,inner)=>`<div class="chartbox"><svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${label}">${inner}</svg></div>`;
+
+// shared week frame for the 21-day charts: separators, week captions, today shading, day labels
+function weekFrame(days,today,L,T,iw,ih,step){
+  const x=i=>L+step*i;let o='';
+  const ti=days.findIndex(d=>d.date===today);
+  if(ti>=0)o+=`<rect x="${x(ti)}" y="${T}" width="${step}" height="${ih}" class="today"/>`;
+  [7,14].forEach(i=>o+=`<line x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${T+ih}" class="sep"/>`);
+  [['ПРЕДХОДНА СЕДМИЦА',0],['ТЕКУЩА СЕДМИЦА',7],['СЛЕДВАЩА СЕДМИЦА (прогноза)',14]].forEach(([t,i])=>o+=`<text x="${x(i)+6}" y="${T-8}" class="cap2">${t}</text>`);
+  days.forEach((d,i)=>o+=`<text x="${x(i)+step/2}" y="${T+ih+15}" class="tx" text-anchor="middle">${dm(d.date)}</text><text x="${x(i)+step/2}" y="${T+ih+28}" class="tx ${d.date===today?'b':''}" text-anchor="middle">${wdOf(d.date)}</text>`);
+  return o;
+}
+
+export function weatherChart(days,today){
+  const W=900,H=340,L=48,R=48,T=34,B=44,iw=W-L-R,ih=H-T-B,step=iw/days.length;
+  const sc=tempScale(days.flatMap(d=>[d.tMax,d.tMin]).filter(v=>v!=null),2);
+  const maxRain=Math.max(0,...days.map(d=>d.rainMm));
+  const rstep=stepFor(maxRain*1.5,sc.ticks,[1,2,5,10,20,50,100]);
+  const y=t=>T+ih-(t-sc.lo)/(sc.hi-sc.lo)*ih,yr=m=>T+ih-m/(rstep*sc.ticks)*ih,cx=i=>L+step*(i+.5);
+  let o='';
+  for(let k=0;k<=sc.ticks;k++){const yy=T+ih-k*ih/sc.ticks;
+    o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${sc.lo+k*sc.tstep}°</text><text x="${L+iw+6}" y="${yy+4}" class="tx">${num(k*rstep,0)}</text>`}
+  o+=`<text transform="translate(12 ${T+ih/2}) rotate(-90)" class="tx" text-anchor="middle">Температура (°C)</text><text transform="translate(${W-8} ${T+ih/2}) rotate(90)" class="tx" text-anchor="middle">Валеж (мм)</text>`;
+  o+=weekFrame(days,today,L,T,iw,ih,step);
+  days.forEach((d,i)=>{if(d.rainMm>0){const bw=step*.6;o+=`<rect x="${cx(i)-bw/2}" y="${yr(d.rainMm)}" width="${bw}" height="${T+ih-yr(d.rainMm)}" rx="2" class="rainbar"/>`}});
+  const ok=days.map((d,i)=>[d,i]).filter(([d])=>d.tMax!=null&&d.tMin!=null);
+  o+=`<polygon points="${ok.map(([d,i])=>cx(i)+','+y(d.tMax)).join(' ')+' '+ok.slice().reverse().map(([d,i])=>cx(i)+','+y(d.tMin)).join(' ')}" class="band"/>`;
+  o+=`<polyline points="${ok.map(([d,i])=>cx(i)+','+y(d.tMax)).join(' ')}" class="lmax"/><polyline points="${ok.map(([d,i])=>cx(i)+','+y(d.tMin)).join(' ')}" class="lmin"/>`;
+  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit"><title>${dmy(d.date)} (${wdOf(d.date)}): макс. ${num(d.tMax)}°C, мин. ${num(d.tMin)}°C, дъжд ${num(d.rainMm)} мм</title></rect>`);
+  return legend([[sw('l','background:var(--cmax)'),'Дневен максимум (°C)'],[sw('l','background:var(--cmin)'),'Дневен минимум (°C)'],[sw('b','background:var(--crain)'),'Валеж (мм)']])+shell(W,H,'Температури и валежи за три седмици',o);
+}
+
+export function intraChart(it){
+  const W=900,H=330,L=48,R=48,T=60,B=34,iw=W-L-R,ih=H-T-B,pts=it.points,n=pts.length,step=iw/n;
+  const sc=tempScale(pts.map(p=>p.temp).filter(v=>v!=null),1);
+  const maxRain=Math.max(0,...pts.map(p=>p.rainMm));
+  const rstep=stepFor(maxRain*1.5,sc.ticks,[.1,.2,.5,1,2,5,10]);
+  const y=t=>T+ih-(t-sc.lo)/(sc.hi-sc.lo)*ih,yr=m=>T+ih-m/(rstep*sc.ticks)*ih,cx=i=>L+step*(i+.5),per=60/it.stepMin;
+  let o='';
+  for(let k=0;k<=sc.ticks;k++){const yy=T+ih-k*ih/sc.ticks;
+    o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${sc.lo+k*sc.tstep}°</text><text x="${L+iw+6}" y="${yy+4}" class="tx">${num(k*rstep,1)}</text>`}
+  o+=`<text transform="translate(12 ${T+ih/2}) rotate(-90)" class="tx" text-anchor="middle">Температура (°C)</text><text transform="translate(${W-8} ${T+ih/2}) rotate(90)" class="tx" text-anchor="middle">Валеж (мм/${it.stepMin} мин)</text>`;
+  for(let hr=0;hr<=24;hr+=3){const xx=L+step*hr*per;o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`}
+  pts.forEach((p,i)=>{if(p.rainMm>0){const bw=Math.max(step*.8,1.5);o+=`<rect x="${cx(i)-bw/2}" y="${yr(p.rainMm)}" width="${bw}" height="${T+ih-yr(p.rainMm)}" rx="1.5" class="rainbar"/>`}});
+  const ok=pts.map((p,i)=>[p,i]).filter(([p])=>p.temp!=null);
+  o+=`<polyline points="${ok.map(([p,i])=>cx(i)+','+y(p.temp)).join(' ')}" class="lmax"/>`;
+  // one event icon per hour: the most severe event in that hour
+  const rank=['thunder','snow','rain','wind','cloud'];
+  for(let hr=0;hr<24;hr++){const evs=pts.slice(hr*per,(hr+1)*per).map(p=>p.event).filter(Boolean);
+    const ev=rank.find(e=>evs.includes(e));if(ev)o+=evIcon(ev,L+step*(hr+.5)*per-9,T-34,18)}
+  const ni=pts.findIndex(p=>p.t>=it.now);
+  if(ni>=0)o+=`<line x1="${cx(ni)}" x2="${cx(ni)}" y1="${T}" y2="${T+ih}" class="now"/><text x="${cx(ni)+4}" y="${T+10}" class="tx b">сега ${it.now}</text>`;
+  pts.forEach((p,i)=>o+=`<rect x="${L+step*i}" y="${T-38}" width="${step}" height="${ih+38}" class="hit"><title>${p.t}: ${num(p.temp)}°C, валеж ${num(p.rainMm,2)} мм${p.event?', '+EVENTS[p.event]:''}</title></rect>`);
+  const used=rank.filter(e=>pts.some(p=>p.event===e));
+  return legend([[sw('l','background:var(--cmax)'),'Температура (°C)'],[sw('b','background:var(--crain)'),`Валеж (мм/${it.stepMin} мин)`],...used.map(e=>[`<svg viewBox="0 0 24 24" class="ev ${e} lg">${ICONS[e]}</svg>`,EVENTS[e]])])+shell(W,H,'Времето днес',o);
+}
+
+export function powerChart(days,today,cap){
+  const W=900,H=346,L=52,R=16,T=66,B=44,iw=W-L-R,ih=H-T-B,step=iw/days.length;
+  const max=Math.max(cap,...days.map(d=>d.kwh))*1.12,ticks=5,tstep=stepFor(max,ticks,[1,2,5,10,20,50,100,200,500,1000]);
+  const y=v=>T+ih-v/(tstep*ticks)*ih,cx=i=>L+step*(i+.5);
+  let o='';
+  for(let k=0;k<=ticks;k++){const yy=T+ih-k*ih/ticks;o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${num(k*tstep,0)}</text>`}
+  o+=`<text transform="translate(12 ${T+ih/2}) rotate(-90)" class="tx" text-anchor="middle">Дневно производство (kWh)</text>`;
+  o+=weekFrame(days,today,L,T,iw,ih,step);
+  days.forEach((d,i)=>{const bw=step*.62;
+    if(d.kwh>0)o+=`<rect x="${cx(i)-bw/2}" y="${y(d.kwh)}" width="${bw}" height="${T+ih-y(d.kwh)}" rx="2" class="${d.date>=today?'kfc':'kprod'}"/>`;
+    const full=d.kwh>=cap;  // can the sun alone fill the battery that day? (icon row above the plot, like the weather events)
+    o+=`<svg x="${cx(i)-9}" y="${T-44}" width="18" height="18" viewBox="0 0 24 24" class="ev ${full?'okc':'nox'}"><title>Батерията ${full?'може':'не може'} да се зареди напълно от слънцето</title>${ICONS[full?'yes_':'no_']}</svg>`});
+  const wave=`M${L} ${y(cap)}`+' q4 -2.5 8 0'+' t8 0'.repeat(Math.floor(iw/8)-1);
+  o+=`<path d="${wave}" class="capw"/><text x="${L+iw-4}" y="${y(cap)-7}" class="tx halo" text-anchor="end">капацитет на батерията ${num(cap)} kWh</text>`;
+  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit"><title>${dmy(d.date)} (${wdOf(d.date)}): ${num(d.kwh)} kWh ${d.date>=today?'(прогноза)':'(оценка)'} – батерията ${d.kwh>=cap?'може':'не може'} да се зареди напълно от слънцето</title></rect>`);
+  return shell(W,H,'Слънчево производство и състояние на батерията',o);
+}
+
