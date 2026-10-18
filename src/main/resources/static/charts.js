@@ -77,29 +77,40 @@ export function intraChart(it){
 }
 
 export function powerChart(days,today,cap){
-  const W=900,H=346,L=52,R=16,T=66,B=44,iw=W-L-R,ih=H-T-B,step=iw/days.length;
+  const lf=d=>d.loadKwh??d.loadEst??0,maxL=Math.max(0,...days.map(lf));
+  const W=900,L=52,R=16,T=66,B=44,step=(W-L-R)/days.length,iw=W-L-R;
   const max=Math.max(cap,...days.map(d=>Math.max(d.kwh,d.produced??0)),1)*1.12,ticks=5,tstep=stepFor(max,ticks,[1,2,5,10,20,50,100,200,500,1000]);
-  const y=v=>T+ih-v/(tstep*ticks)*ih,cx=i=>L+step*(i+.5);
+  // below the x axis: the home's consumption on the same kWh scale
+  const nneg=maxL>0?Math.ceil(maxL/tstep):0,ihU=240,pxk=ihU/(tstep*ticks),ihD=nneg*tstep*pxk,ih=ihU,H=346+ihD;
+  const y=v=>T+ih-v/(tstep*ticks)*ih,cx=i=>L+step*(i+.5),yd=v=>T+ih+v*pxk;
   let o='';
   for(let k=0;k<=ticks;k++){const yy=T+ih-k*ih/ticks;o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${num(k*tstep,0)}</text>`}
   o+=`<text transform="translate(12 ${T+ih/2}) rotate(-90)" class="tx" text-anchor="middle">Дневно производство (kWh)</text>`;
-  o+=weekFrame(days,today,L,T,iw,ih,step);
+  for(let k=1;k<=nneg;k++){const yy=yd(k*tstep);o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">-${num(k*tstep,0)}</text>`}
+  if(nneg)o+=`<text transform="translate(12 ${T+ih+ihD/2}) rotate(-90)" class="tx" text-anchor="middle">Консумация (kWh)</text>`;
+  o+=weekFrame(days,today,L,T,iw,ih+ihD,step);
   // solid bars = panel output measured by SolaX for past days (fetched once each); pale bars = solar forecast, today included.
   const measured=d=>d.date<today&&d.produced!=null,val=d=>measured(d)?d.produced:d.kwh;
   const measuredCharge=d=>d.date<today&&d.maxSoc!=null,reached=d=>d.maxSoc>=99; // 99: chargers often stop a hair below 100
-  const fullFor=d=>measuredCharge(d)?reached(d):val(d)>=cap;
+  // today and later: the house (heat pump...) uses part of the sun first, so only the rest can go into the battery
+  const net=d=>val(d)-(d.homeKwh||0),fullFor=d=>measuredCharge(d)?reached(d):net(d)>=cap;
   const noData=d=>d.date<today&&!measuredCharge(d);
-  const chargeText=d=>measuredCharge(d)?`батерия ${num(d.maxSoc,0)}%`
-    :noData(d)?'няма данни за батерията'
-    :val(d)>=cap?'батерия 100%':'батерия под 100%';
+  // callout text explaining the check: was/will the battery be charged from the sun
+  const chargeTip=d=>`${dmy(d.date)} (${wdOf(d.date)})|`+(measuredCharge(d)
+    ?(reached(d)?`Слънцето е заредило батерията до 100% (макс. ${num(d.maxSoc,0)}%)`:`Слънцето не е заредило батерията напълно (макс. ${num(d.maxSoc,0)}%)`)
+    :noData(d)?'Няма данни дали слънцето е заредило батерията'
+    :net(d)>=cap?`Слънцето ще зареди батерията до 100% (прогноза ${num(val(d))} kWh${d.homeKwh?`, консумация през деня ≈ ${num(d.homeKwh)} kWh`:''} при капацитет ${num(cap)} kWh)`
+    :`Слънцето няма да зареди батерията напълно (прогноза ${num(val(d))} kWh${d.homeKwh?`, консумация през деня ≈ ${num(d.homeKwh)} kWh`:''} при капацитет ${num(cap)} kWh)`);
   const bar=(i,v,cls)=>{const bw=step*.62;return v>0?`<rect x="${cx(i)-bw/2}" y="${y(v)}" width="${bw}" height="${T+ih-y(v)}" rx="2" class="${cls}"/>`:''};
   days.forEach((d,i)=>{
     o+=bar(i,val(d),measured(d)?'kprod':'kfc');
+    if(lf(d)>0){const bw=step*.62;o+=`<rect x="${cx(i)-bw/2}" y="${T+ih}" width="${bw}" height="${lf(d)*pxk}" rx="2" class="${d.loadKwh!=null?'kbat':'kbatf'}"/>`}
     // icon row above the plot: for a past day, did the battery really reach 100 % (nothing until its history is fetched)? For today
     // and the future, can the sun alone fill it, judged from the forecast
     const full=fullFor(d);
-    if(cap>0)o+=noData(d)?`<svg x="${cx(i)-9}" y="${T-44}" width="18" height="18" viewBox="0 0 24 24" class="ev"><title>${chargeText(d)}</title><line x1="7" y1="12" x2="17" y2="12"/></svg>`
-      :`<svg x="${cx(i)-9}" y="${T-44}" width="18" height="18" viewBox="0 0 24 24" class="ev ${full?'okc':'nox'}"><title>${chargeText(d)}</title>${ICONS[full?'yes_':'no_']}</svg>`});
+    if(cap>0)o+=`<rect x="${L+step*i}" y="${T-48}" width="${step}" height="48" class="hit" data-tip="${chargeTip(d)}"/>`
+      +(noData(d)?`<svg x="${cx(i)-9}" y="${T-44}" width="18" height="18" viewBox="0 0 24 24" class="ev" data-tip="${chargeTip(d)}"><line x1="7" y1="12" x2="17" y2="12"/></svg>`
+      :`<svg x="${cx(i)-9}" y="${T-44}" width="18" height="18" viewBox="0 0 24 24" class="ev ${full?'okc':'nox'}" data-tip="${chargeTip(d)}">${ICONS[full?'yes_':'no_']}</svg>`)});
   const wave=`M${L} ${y(cap)}`+' q4 -2.5 8 0'+' t8 0'.repeat(Math.floor(iw/8)-1);
   if(cap>0)o+=`<path d="${wave}" class="capw"/><text x="${L+iw-4}" y="${y(cap)-7}" class="tx halo" text-anchor="end">капацитет на батерията ${num(cap)} kWh</text>`;
   const tip=d=>{
@@ -108,9 +119,10 @@ export function powerChart(days,today,cap){
     else p.push(`${d.date<today?'оценка':'прогноза'} ${num(d.kwh)} kWh`);
     if(d.ac!=null)p.push(`инвертор ${num(d.ac)} kWh`);
     if(d.maxSoc!=null)p.push(`батерия ${num(d.maxSoc,0)}%`);
+    if(d.loadKwh!=null)p.push(`консумация ${num(d.loadKwh)} kWh`);else if(d.loadEst!=null)p.push(`консумация (оценка) ${num(d.loadEst)} kWh`);
     return p.join('|');
   };
-  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${dmy(d.date)} (${wdOf(d.date)})|${tip(d)}"/>`);
+  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih+ihD}" class="hit" data-tip="${dmy(d.date)} (${wdOf(d.date)})|${tip(d)}"/>`);
   return shell(W,H,'Слънчево производство и състояние на батерията',o);
 }
 

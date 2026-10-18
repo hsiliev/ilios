@@ -44,15 +44,19 @@ val PRICE_NIGHT = TARIFFS.getValue(DEFAULT_SUPPLIER).second
  * Whether to charge the battery from the grid tonight at the cheap tariff. The room in the battery is what tomorrow's sun is not
  * expected to fill; that energy bought at night instead of during the day is the saving. Null when the charge is unknown.
  */
-fun nightCharge(batteryKwh: Double, soc: Double?, tomorrowKwh: Double?, dayPrice: Double = PRICE_DAY, nightPrice: Double = PRICE_NIGHT): NightCharge? {
+fun nightCharge(
+    batteryKwh: Double, soc: Double?, tomorrowKwh: Double?, dayPrice: Double = PRICE_DAY, nightPrice: Double = PRICE_NIGHT, homeKwh: Double = 0.0,
+): NightCharge? {
     if (batteryKwh <= 0 || soc == null || tomorrowKwh == null) return null
     val room = batteryKwh * (1 - soc.coerceIn(0.0, 100.0) / 100)
-    val kwh = (minOf(room, batteryKwh - tomorrowKwh)).coerceAtLeast(0.0)
+    val sunKwh = (tomorrowKwh - homeKwh).coerceAtLeast(0.0) // what is left for the battery after the home (heat pump...) has used its share
+    val kwh = (minOf(room, batteryKwh - sunKwh)).coerceAtLeast(0.0)
+    val home = if (homeKwh > 0.05) " след ≈ ${bg(r1(homeKwh))} kWh консумация на къщата през деня" else ""
     if (kwh < 0.5) return NightCharge(false, 0.0, 0.0, 0.0, dayPrice, nightPrice,
-        if (room < 0.5) "Батерията е почти пълна – не е нужно нощно зареждане." else "Утре слънцето (≈ ${bg(r1(tomorrowKwh))} kWh) ще напълни батерията – не зареждайте от мрежата.")
+        if (room < 0.5) "Батерията е почти пълна – не е нужно нощно зареждане." else "Утре слънцето (≈ ${bg(r1(tomorrowKwh))} kWh)$home ще напълни батерията – не зареждайте от мрежата.")
     val cost = kwh * nightPrice; val saving = kwh * (dayPrice - nightPrice)
     return NightCharge(true, r1(kwh), round(saving * 100) / 100, round(cost * 100) / 100, dayPrice, nightPrice,
-        "Заредете батерията от мрежата през нощта с около ${bg(r1(kwh))} kWh: утре слънцето (≈ ${bg(r1(tomorrowKwh))} kWh) няма да я напълни. " +
+        "Заредете батерията от мрежата през нощта с около ${bg(r1(kwh))} kWh: утре слънцето (≈ ${bg(r1(tomorrowKwh))} kWh)$home няма да я напълни. " +
             "Нощната цена е ${bg2(nightPrice)} €/kWh срещу ${bg2(dayPrice)} € през деня – ≈ ${bg2(cost)} € разход и ≈ ${bg2(saving)} € икономия.")
 }
 
@@ -62,6 +66,9 @@ class DayPoint(
     val date: String, val tMax: Double?, val tMin: Double?, val rainMm: Double, val kwh: Double,
     val produced: Double? = null, val ac: Double? = null, // ac: inverter AC output of that day, for comparison with the SolaX app
     val maxSoc: Double? = null, // highest battery charge (%) a past day reached, from SolaX's battery history
+    val loadKwh: Double? = null, // past days: the home's measured total consumption
+    val loadEst: Double? = null, // today and later: estimated total consumption from the temperature and the sun, learnt from past days
+    val homeKwh: Double? = null, // today and later: expected daytime consumption of the house, which the sun has to cover before the battery gets any
 )
 
 /** One step of today's forecast at the finest resolution Open-Meteo offers. event: thunder | snow | rain | wind | cloud */
@@ -82,6 +89,36 @@ class Report(
     val batteryToday: List<TodayPoint> = emptyList(), val pvForecast: List<TodayPoint> = emptyList(),
     val night: NightCharge? = null, val missed: MissedCharge? = null,
 )
+
+/** Share of a day's consumption that falls while the sun is up (the rest is evening and night, when the battery serves it anyway). */
+const val DAYTIME_LOAD_SHARE = 0.6
+
+/** Expected daytime consumption: the mean of the last 7 finished days' measured consumption (the heat pump included) times [DAYTIME_LOAD_SHARE]. */
+fun homeDaytimeKwh(load: Map<LocalDate, Double>, today: LocalDate): Double? =
+    (1L..7L).mapNotNull { load[today.minusDays(it)] }.takeIf { it.isNotEmpty() }?.average()?.times(DAYTIME_LOAD_SHARE)
+
+private fun meanTemp(tMax: Double?, tMin: Double?): Double? = listOfNotNull(tMax, tMin).takeIf { it.isNotEmpty() }?.average()
+
+/**
+ * Expected total consumption of a day: least squares of past days' consumption on mean temperature and solar kWh (heating rises when
+ * it is cold, and a sunny day warms the house). Falls back to the mean with too few days or a degenerate fit; kept within 0.3x..3x of the mean.
+ */
+fun estimateLoad(samples: List<Triple<Double?, Double, Double>>, temp: Double?, sun: Double): Double? {
+    val s = samples.filter { it.first != null }.map { Triple(it.first!!, it.second, it.third) }
+    if (samples.isEmpty()) return null
+    val mean = samples.map { it.third }.average()
+    if (temp == null || s.size < 5) return mean
+    val x = s.map { doubleArrayOf(1.0, it.first, it.second) }; val y = s.map { it.third }
+    val a = Array(3) { i -> DoubleArray(4) { j -> if (j < 3) x.sumOf { r -> r[i] * r[j] } else x.indices.sumOf { k -> x[k][i] * y[k] } } }
+    for (i in 0 until 3) { // gaussian elimination with partial pivoting
+        val p = (i until 3).maxBy { kotlin.math.abs(a[it][i]) }
+        if (kotlin.math.abs(a[p][i]) < 1e-9) return mean
+        a[i] = a[p].also { a[p] = a[i] }
+        for (r in 0 until 3) if (r != i) { val f = a[r][i] / a[i][i]; for (c in i..3) a[r][c] -= f * a[i][c] }
+    }
+    val est = (0 until 3).map { a[it][3] / a[it][it] }.let { it[0] + it[1] * temp + it[2] * sun }
+    return est.coerceIn(mean * 0.3, mean * 3)
+}
 
 private fun r1(x: Double) = round(x * 10) / 10
 
@@ -134,14 +171,21 @@ fun solarKwh(d: Day, kwp: Double, ratio: Double) = kwp * (d.radiationMj / 3.6) *
 fun buildReport(
     loc: Loc, days: List<Day>, today: LocalDate, intraday: Intraday?,
     produced: Map<LocalDate, Double> = emptyMap(), plant: SolaxPlant? = null, ac: Map<LocalDate, Double> = emptyMap(),
-    maxSoc: Map<LocalDate, Double> = emptyMap(), batteryToday: List<TodayPoint> = emptyList(),
+    maxSoc: Map<LocalDate, Double> = emptyMap(), batteryToday: List<TodayPoint> = emptyList(), load: Map<LocalDate, Double> = emptyMap(),
 ): Report {
     val kwp = plant?.kwp ?: 0.0 // installed PV power comes from SolaX; without it there is no estimate
     val ratio = calibratedRatio(days, produced, kwp, today)
     val monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     fun range(from: LocalDate, to: LocalDate) = days.filter { it.date in from..to }
+    val homeDay = homeDaytimeKwh(load, today)
+    val samples = days.filter { it.date < today && load[it.date] != null }
+        .map { Triple(meanTemp(it.tMax, it.tMin), produced[it.date] ?: solarKwh(it, kwp, ratio), load.getValue(it.date)) }
     val points = range(monday.minusDays(7), monday.plusDays(13)).map {
-        DayPoint(it.date.toString(), it.tMax, it.tMin, r1(it.rainMm), r1(solarKwh(it, kwp, ratio)), produced[it.date]?.let(::r1), ac[it.date]?.let(::r1), maxSoc[it.date]?.let(::r1))
+        val sun = produced[it.date] ?: r1(solarKwh(it, kwp, ratio))
+        DayPoint(it.date.toString(), it.tMax, it.tMin, r1(it.rainMm), r1(solarKwh(it, kwp, ratio)), produced[it.date]?.let(::r1), ac[it.date]?.let(::r1), maxSoc[it.date]?.let(::r1),
+            if (it.date < today) load[it.date]?.let(::r1) else null,
+            if (it.date >= today) estimateLoad(samples, meanTemp(it.tMax, it.tMin), sun)?.let(::r1) else null,
+            if (it.date >= today) homeDay?.let(::r1) else null)
     }
 
     // Rain: accumulated from the start of last week through today vs. expected from tomorrow to the end of next week.
@@ -172,7 +216,7 @@ fun buildReport(
             .map { TodayPoint(it.t, null, round(kwp * it.radWm2!! * ratio)) } else emptyList(),
         night = if (battery != null) {
                     val (dayPrice, nightPrice) = TARIFFS[loc.supplier] ?: TARIFFS.getValue(DEFAULT_SUPPLIER)
-                    nightCharge(battery.batteryKwh, battery.soc, points.find { it.date == today.plusDays(1).toString() }?.kwh, dayPrice, nightPrice)
+                    nightCharge(battery.batteryKwh, battery.soc, points.find { it.date == today.plusDays(1).toString() }?.kwh, dayPrice, nightPrice, homeDay ?: 0.0)
                 } else null,
         missed = if (battery != null) {
                     val (dayPrice, nightPrice) = TARIFFS[loc.supplier] ?: TARIFFS.getValue(DEFAULT_SUPPLIER)

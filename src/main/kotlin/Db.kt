@@ -74,6 +74,7 @@ object Produced : Table("produced") {
     val day = varchar("day", 10) // ISO date
     val kwh = double("kwh") // PV generation: what the panels produced
     val acKwh = double("ac_kwh").nullable() // inverter AC output (the SolaX app's "Inverter Output"), kept to compare with kwh
+    val loadKwh = double("load_kwh").nullable() // the home's total consumption that day (heat pump included), for the battery forecast
     override val primaryKey = PrimaryKey(locationId, day)
 }
 
@@ -134,10 +135,11 @@ fun initDb(path: String) {
     transaction {
         // days stored before the AC column existed are fetched again once
         val hadAc = runCatching { exec("SELECT ac_kwh FROM produced WHERE 1 = 0") }.isSuccess
+        val hadLoad = runCatching { exec("SELECT load_kwh FROM produced WHERE 1 = 0") }.isSuccess
         // connected places read the battery devices' capacity together with the plant record: do that once after the upgrade
         val hadDeviceKwh = runCatching { exec("SELECT battery_device_kwh FROM solax WHERE 1 = 0") }.isSuccess
         SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, SolarToday, GeocodeCache)
-        if (!hadAc) exec("UPDATE solax SET produced_through = NULL")
+        if (!hadAc || !hadLoad) exec("UPDATE solax SET produced_through = NULL")
         if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")
         // obsolete: the old per-user settings table and the typed-in performance ratio (now calibrated from SolaX data)
         exec("DROP TABLE IF EXISTS settings")

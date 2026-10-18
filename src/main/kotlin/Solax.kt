@@ -106,7 +106,7 @@ fun lastBatterySlot(now: Instant): Instant = now.truncatedTo(java.time.temporal.
 )
 @Serializable private class StatResp(val code: Int = -1, val message: String? = null, val result: StatResult? = null)
 @Serializable private class StatResult(val plantEnergyStatDataList: List<StatRow> = emptyList())
-@Serializable private class StatRow(val date: String, val pvGeneration: Double? = null, val inverterACOutputEnergy: Double? = null)
+@Serializable private class StatRow(val date: String, val pvGeneration: Double? = null, val inverterACOutputEnergy: Double? = null, val loadConsumption: Double? = null)
 @Serializable private class DevicesResp(val code: Int = -1, val message: String? = null, val result: DevicesResult? = null)
 @Serializable private class DevicesResult(val records: List<DeviceRec> = emptyList(), val pages: Int = 1)
 @Serializable private class DeviceRec(val deviceSn: String? = null, val ratedCapacity: JsonPrimitive? = null)
@@ -196,6 +196,12 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
     fun producedAc(locationId: Long): Map<LocalDate, Double> = transaction {
         Produced.selectAll().where { Produced.locationId eq locationId }
             .mapNotNull { r -> r[Produced.acKwh]?.let { LocalDate.parse(r[Produced.day]) to it } }.toMap()
+    }
+
+    /** The home's total consumption per day (heat pump included), as SolaX reports it. */
+    fun consumption(locationId: Long): Map<LocalDate, Double> = transaction {
+        Produced.selectAll().where { Produced.locationId eq locationId }
+            .mapNotNull { r -> r[Produced.loadKwh]?.let { LocalDate.parse(r[Produced.day]) to it } }.toMap()
     }
 
     /** The highest battery charge (%) each past day reached, where SolaX's history was fetched. */
@@ -402,12 +408,13 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
                 type = usedType; rows += list
             }
         }
-        val fresh = rows.mapNotNull { r -> r.pvGeneration?.let { Triple(LocalDate.parse(r.date), it, r.inverterACOutputEnergy) } }.filter { it.first in start..end }
+        val fresh = rows.mapNotNull { r -> r.pvGeneration?.let { Triple(LocalDate.parse(r.date), it, r.inverterACOutputEnergy to r.loadConsumption) } }.filter { it.first in start..end }
         transaction {
             if (start <= end) {
                 Produced.deleteWhere { (Produced.locationId eq loc.id) and (Produced.day greaterEq start.toString()) and (Produced.day lessEq end.toString()) }
-                Produced.batchInsert(fresh) { (d, kwh, ac) ->
-                    this[Produced.locationId] = loc.id; this[Produced.day] = d.toString(); this[Produced.kwh] = kwh; this[Produced.acKwh] = ac
+                Produced.batchInsert(fresh) { (d, kwh, acLoad) ->
+                    val (ac, load) = acLoad
+                    this[Produced.locationId] = loc.id; this[Produced.day] = d.toString(); this[Produced.kwh] = kwh; this[Produced.acKwh] = ac; this[Produced.loadKwh] = load
                 }
             }
             Solax.update({ Solax.locationId eq loc.id }) {
