@@ -1,5 +1,5 @@
 import {$,h,say,api,f1,svg,ICONS} from './util.js';
-import {weatherChart,intraChart,powerChart} from './charts.js';
+import {weatherChart,intraChart,powerChart,batteryChart} from './charts.js';
 
 // collapsible place: a summary row with today's key figures, the charts and advice inside
 const OPEN_KEY='ilios.open';
@@ -12,7 +12,7 @@ const batIcon=(p,cls)=>svg('<rect x="1" y="6" width="18" height="12" rx="2"/><li
   +`<rect x="3.5" y="8.5" width="${Math.max(0,Math.min(100,p))*0.135}" height="7" rx="1" fill="currentColor" stroke="none"/>`,'bat '+level(p)+' '+cls);
 function batteryText(b){
   if(b.soc==null)return b.batteryKwh>0?'Капацитет на батерията: '+f1(b.batteryKwh)+' kWh':'';
-  // the charge is read daily at 22:30 Sofia time, so show when (with the date once it is not today's)
+  // the charge is read hourly, so show when (with the date once it is not today's)
   const tz={timeZone:'Europe/Sofia'},d=b.readAt?new Date(b.readAt):null;
   const time=!d?'':d.toLocaleTimeString('bg-BG',{...tz,hour:'2-digit',minute:'2-digit'})+(d.toLocaleDateString('bg-BG',tz)===new Date().toLocaleDateString('bg-BG',tz)?'':' на '+d.toLocaleDateString('bg-BG',{...tz,day:'2-digit',month:'2-digit'}));
   const kw=Math.abs(b.powerW||0)/1000;
@@ -48,15 +48,27 @@ function placeSummary(r){
         return chip('Утре: '+f1(tom.kwh)+' kWh – батерията '+(full?'може':'не може')+' да се зареди напълно от слънцето',svg(ICONS[full?'yes_':'no_'],'sm ev '+(full?'okc':'nox')),f1(tom.kwh)+' kWh')})()));
 }
 
+function recommendations(r){
+  const w=r.watering,n=r.night,crops=[['plants','Растения'],['grass','Трева'],['trees','Дървета']];
+  return h('div',{cls:'recs'},h('h3',{},'Препоръки'),
+    h('div',{cls:'recgrid'},
+    ...crops.map(([k,l])=>h('div',{cls:'rec'},svg(ICONS[k],'crop sm'),h('b',{},l),h('span',{cls:'rt'},svg(ICONS[w[k].water],'water sm '+w[k].water),w[k].text))),
+    ...(n?[h('div',{cls:'rec'},batIcon(n.charge?20:100,'sm'),h('b',{},'Батерия през нощта'),h('span',{cls:'rt'},n.text))]:[]),
+    ...(r.missed?[h('div',{cls:'rec'},batIcon(r.missed.lostEur>0?20:100,'sm'),h('b',{},'Пропусната икономия днес'),h('span',{cls:'rt'},r.missed.text))]:[])));
+}
+
 function reportCard(r,i,state){
   if(r.error)return h('div',{cls:'card'},h('h2',{},r.name,r.country?[' ',h('span',{cls:'mut'},r.country)]:''),h('div',{cls:'yes'},r.error));
   const b=r.battery,html=(t,s)=>{const d=h('div');d.innerHTML=s;return t?[h('h3',{},t),d]:[d]};
   return h('details',{cls:'card place',open:state[r.id]??i===0,      ontoggle:e=>{const st=readOpen();st[r.id]=e.target.open;localStorage.setItem(OPEN_KEY,JSON.stringify(st))}},
     placeSummary(r),
-    h('div',{cls:'pbody'},
+    h('div',{cls:'pbody'+(r.solar?' two':'')},
+    h('div',{cls:'col'},
     ...html('Седмични температури и валежи',weatherChart(r.days,r.today)),
-    ...(r.intraday?html('Днес',intraChart(r.intraday)):[h('h3',{},'Днес'),h('p',{cls:'mut'},'Данните за деня се зареждат…')]),
-    ...(b?[h('h3',{},'Слънце и батерия'),...batteryLine(b),...html(null,powerChart(r.days,r.today,b.batteryKwh))]:r.solar?[h('h3',{},'Слънце и батерия'),h('p',{cls:'mut'},'Чака се връзка със Solax – въведете Client ID и Secret в ',h('a',{href:'#settings'},'настройките'),'. Мощността на панелите и капацитетът на батерията се вземат оттам.')]:[])));
+    ...(r.intraday?html('Времето днес',intraChart(r.intraday)):[h('h3',{},'Времето днес'),h('p',{cls:'mut'},'Данните за деня се зареждат…')]),
+    ),
+    ...(r.solar?[h('div',{cls:'col'},
+    ...(b?[h('h3',{},'Седмично слънце'),...html(null,powerChart(r.days,r.today,b.batteryKwh)),h('h3',{},'Батерия днес'),...(r.batteryToday?.length||r.pvForecast?.length?html(null,batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'')):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')])]:r.solar?[h('h3',{},'Седмично слънце'),h('p',{cls:'mut'},'Чака се връзка със Solax – въведете Client ID и Secret в ',h('a',{href:'#settings'},'настройките'),'. Мощността на панелите и капацитетът на батерията се вземат оттам.')]:[]))]:[])),recommendations(r));
 }
 
 

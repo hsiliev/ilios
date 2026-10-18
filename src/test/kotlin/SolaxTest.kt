@@ -403,7 +403,7 @@ class SolaxTest {
     private fun at(utc: String) = Instant.parse(utc)
 
     @Test
-    fun theBatteryIsReadRightAfterConnectingAndThenOncePerDayAt2230SofiaTime() = runBlocking {
+    fun theBatteryIsReadRightAfterConnectingAndThenHourly() = runBlocking {
         val (loc, svc, seen) = connected()
 
         svc.readBatteryIfDue(loc, at("2026-10-16T08:00:00Z")) // 11:00 Sofia: first reading after connecting
@@ -416,16 +416,15 @@ class SolaxTest {
         val read = paths(seen, "/realtime_data").single().url.parameters
         assertEquals("INV1", read["snList"]); assertEquals("2", read["deviceType"]); assertEquals("1", read["requestSnType"])
 
-        svc.readBatteryIfDue(loc, at("2026-10-16T12:00:00Z")) // 15:00 Sofia: nothing new is due
-        svc.readBatteryIfDue(loc, at("2026-10-16T19:29:00Z")) // 22:29 Sofia: one minute early
+        svc.readBatteryIfDue(loc, at("2026-10-16T08:50:00Z")) // same hour: nothing new is due
         assertEquals(1, paths(seen, "/realtime_data").size)
 
-        svc.readBatteryIfDue(loc, at("2026-10-16T19:31:00Z")) // 22:31 Sofia: the 22:30 slot has passed
+        svc.readBatteryIfDue(loc, at("2026-10-16T09:01:00Z")) // the next hour has begun
         assertEquals(2, paths(seen, "/realtime_data").size)
-        svc.readBatteryIfDue(loc, at("2026-10-16T21:00:00Z")) // already read after this slot
+        svc.readBatteryIfDue(loc, at("2026-10-16T09:40:00Z")) // already read this hour
         assertEquals(2, paths(seen, "/realtime_data").size)
 
-        svc.readBatteryIfDue(loc, at("2026-10-17T19:31:00Z")) // next day
+        svc.readBatteryIfDue(loc, at("2026-10-17T19:31:00Z")) // much later
         assertEquals(3, paths(seen, "/realtime_data").size)
         assertEquals(1, paths(seen, "/page_device_info").count { it.url.parameters["deviceType"] == "1" }, "the inverter serials are looked up once")
     }
@@ -545,13 +544,10 @@ class SolaxTest {
     }
 
     @Test
-    fun theSlotFollowsSofiaTimeAcrossTheSummerWinterChange() {
-        // summer time (UTC+3): 22:30 Sofia is 19:30 UTC
-        assertEquals(at("2026-10-24T19:30:00Z"), lastBatterySlot(at("2026-10-24T19:30:00Z")))
-        assertEquals(at("2026-10-23T19:30:00Z"), lastBatterySlot(at("2026-10-24T19:29:00Z")))
-        // winter time (UTC+2) from 25 October: 22:30 Sofia is 20:30 UTC
-        assertEquals(at("2026-10-26T20:30:00Z"), lastBatterySlot(at("2026-10-26T20:45:00Z")))
-        assertEquals(at("2026-10-25T20:30:00Z"), lastBatterySlot(at("2026-10-26T20:29:00Z")))
+    fun theBatterySlotIsTheStartOfTheCurrentHour() {
+        assertEquals(at("2026-10-24T19:00:00Z"), lastBatterySlot(at("2026-10-24T19:00:00Z")))
+        assertEquals(at("2026-10-24T19:00:00Z"), lastBatterySlot(at("2026-10-24T19:59:59Z")))
+        assertEquals(at("2026-10-24T18:00:00Z"), lastBatterySlot(at("2026-10-24T18:30:00Z")))
     }
 
     @Test

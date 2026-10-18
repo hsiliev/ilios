@@ -47,7 +47,7 @@ export function weatherChart(days,today){
   const ok=days.map((d,i)=>[d,i]).filter(([d])=>d.tMax!=null&&d.tMin!=null);
   o+=`<polygon points="${ok.map(([d,i])=>cx(i)+','+y(d.tMax)).join(' ')+' '+ok.slice().reverse().map(([d,i])=>cx(i)+','+y(d.tMin)).join(' ')}" class="band"/>`;
   o+=`<polyline points="${ok.map(([d,i])=>cx(i)+','+y(d.tMax)).join(' ')}" class="lmax"/><polyline points="${ok.map(([d,i])=>cx(i)+','+y(d.tMin)).join(' ')}" class="lmin"/>`;
-  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit"><title>${dmy(d.date)} (${wdOf(d.date)}): макс. ${num(d.tMax)}°C, мин. ${num(d.tMin)}°C, дъжд ${num(d.rainMm)} мм</title></rect>`);
+  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${dmy(d.date)} (${wdOf(d.date)})|макс. ${num(d.tMax)}°C|мин. ${num(d.tMin)}°C|дъжд ${num(d.rainMm)} мм"/>`);
   return legend([[sw('l','background:var(--cmax)'),'Дневен максимум (°C)'],[sw('l','background:var(--cmin)'),'Дневен минимум (°C)'],[sw('b','background:var(--crain)'),'Валеж (мм)']])+shell(W,H,'Температури и валежи за три седмици',o);
 }
 
@@ -71,7 +71,7 @@ export function intraChart(it){
     const ev=rank.find(e=>evs.includes(e));if(ev)o+=evIcon(ev,L+step*(hr+.5)*per-9,T-34,18)}
   const ni=pts.findIndex(p=>p.t>=it.now);
   if(ni>=0)o+=`<line x1="${cx(ni)}" x2="${cx(ni)}" y1="${T}" y2="${T+ih}" class="now"/><text x="${cx(ni)+4}" y="${T+10}" class="tx b">сега ${it.now}</text>`;
-  pts.forEach((p,i)=>o+=`<rect x="${L+step*i}" y="${T-38}" width="${step}" height="${ih+38}" class="hit"><title>${p.t}: ${num(p.temp)}°C, валеж ${num(p.rainMm,2)} мм${p.event?', '+EVENTS[p.event]:''}</title></rect>`);
+  pts.forEach((p,i)=>o+=`<rect x="${L+step*i}" y="${T-38}" width="${step}" height="${ih+38}" class="hit" data-tip="${p.t}|${num(p.temp)}°C|валеж ${num(p.rainMm,2)} мм${p.event?'|'+EVENTS[p.event]:''}"/>`);
   const used=rank.filter(e=>pts.some(p=>p.event===e));
   return legend([[sw('l','background:var(--cmax)'),'Температура (°C)'],[sw('b','background:var(--crain)'),`Валеж (мм/${it.stepMin} мин)`],...used.map(e=>[`<svg viewBox="0 0 24 24" class="ev ${e} lg">${ICONS[e]}</svg>`,EVENTS[e]])])+shell(W,H,'Времето днес',o);
 }
@@ -108,9 +108,53 @@ export function powerChart(days,today,cap){
     else p.push(`${d.date<today?'оценка':'прогноза'} ${num(d.kwh)} kWh`);
     if(d.ac!=null)p.push(`инвертор ${num(d.ac)} kWh`);
     if(d.maxSoc!=null)p.push(`батерия ${num(d.maxSoc,0)}%`);
-    return p.join(', ');
+    return p.join('|');
   };
-  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit"><title>${tip(d)}</title></rect>`);
+  days.forEach((d,i)=>o+=`<rect x="${L+step*i}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${dmy(d.date)} (${wdOf(d.date)})|${tip(d)}"/>`);
   return shell(W,H,'Слънчево производство и състояние на батерията',o);
 }
 
+
+// callout shown on hover/touch over any chart column carrying data-tip ("line|line|…"); one shared element
+let callout;
+function showCallout(e){
+  const t=e.target.closest?.('[data-tip]');
+  if(!t){if(callout)callout.hidden=true;return}
+  if(!callout){callout=document.createElement('div');callout.className='callout';document.body.append(callout)}
+  const [head,...rest]=t.dataset.tip.split('|');
+  callout.replaceChildren(Object.assign(document.createElement('b'),{textContent:head}),...rest.map(x=>Object.assign(document.createElement('div'),{textContent:x})));
+  callout.hidden=false;
+  const r=callout.getBoundingClientRect(),m=12;
+  callout.style.left=Math.max(4,Math.min(e.clientX+m,innerWidth-r.width-4))+'px';
+  callout.style.top=(e.clientY+m+r.height>innerHeight?e.clientY-m-r.height:e.clientY+m)+'px';
+}
+document.addEventListener('pointermove',showCallout);
+document.addEventListener('pointerdown',showCallout);
+document.addEventListener('pointerleave',()=>{if(callout)callout.hidden=true});
+
+// today's battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes)
+export function batteryChart(pts,fc=[],now=''){
+  const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,n=288,step=iw/n,ticks=5;
+  const last=pts.length?pts[pts.length-1].t:now,future=fc.filter(p=>p.t>last&&p.pvW>0);
+  const maxKw=Math.max(0.5,...pts.map(p=>(p.pvW||0)/1000),...future.map(p=>p.pvW/1000))*1.1,kstep=stepFor(maxKw,ticks,[.5,1,2,5,10,20,50,100]);
+  const maxD=Math.max(0,...pts.map(p=>p.batW<0?-p.batW/1000:0)),hasD=maxD>0;
+  // the zone below the x axis (battery consumption) only exists when there is any discharge
+  // both zones share one kW scale: the same number of pixels per kW above and below the axis
+  const nneg=hasD?Math.ceil(maxD/kstep):0,ihT=ih*ticks/(ticks+nneg),ihB=ih-ihT,midY=T+ihT,dmax=nneg*kstep;
+  const yk=v=>midY-v/(kstep*ticks)*ihT,yp=p=>midY-p/100*ihT,yd=v=>midY+v/dmax*ihB,at=t=>{const[hh,mm]=t.split(':');return(+hh*60+ +mm)/5};
+  let o='';
+  for(let k=0;k<=ticks;k++){const yy=midY-k*ihT/ticks;
+    o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${num(k*kstep,kstep<1?1:0)}</text><text x="${L+iw+6}" y="${yy+4}" class="tx">${k*20}%</text>`}
+  if(hasD){for(let k=1;k<=nneg;k++){const yy=yd(k*kstep);o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">-${num(k*kstep,kstep<1?1:0)}</text>`}
+    o+=`<text transform="translate(12 ${midY+ihB/2}) rotate(-90)" class="tx" text-anchor="middle">Батерия (kW)</text>`}
+  o+=`<text transform="translate(12 ${T+ihT/2}) rotate(-90)" class="tx" text-anchor="middle">Мощност на панелите (kW)</text><text transform="translate(${W-8} ${T+ihT/2}) rotate(90)" class="tx" text-anchor="middle">Заряд на батерията (%)</text>`;
+  for(let hr=0;hr<=24;hr+=3){const xx=L+step*hr*12;o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`}
+  pts.forEach(p=>{const v=(p.pvW||0)/1000;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${yk(v)}" width="${bw}" height="${midY-yk(v)}" class="kprod"/>`}});
+  pts.forEach(p=>{const v=p.batW<0?-p.batW/1000:0;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});
+  // pale bars: Open-Meteo's forecast (15-minute steps) for the rest of the day
+  future.forEach(p=>{const bw=step*3*.9;o+=`<rect x="${L+step*at(p.t)+step*1.5-bw/2}" y="${yk(p.pvW/1000)}" width="${bw}" height="${midY-yk(p.pvW/1000)}" class="kfc"/><rect x="${L+step*at(p.t)}" y="${T}" width="${step*3}" height="${ih}" class="hit" data-tip="${p.t}|прогноза ${num(p.pvW/1000,2)} kW"/>`});
+  const s=pts.filter(p=>p.soc!=null);
+  if(s.length)o+=`<polyline points="${s.map(p=>(L+step*(at(p.t)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc"/>`;
+  pts.forEach(p=>o+=`<rect x="${L+step*at(p.t)}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${p.t}${p.pvW!=null?'|панели '+num(p.pvW/1000,2)+' kW':''}${p.batW<0?'|от батерията '+num(-p.batW/1000,2)+' kW':''}${p.soc!=null?'|батерия '+num(p.soc,0)+'%':''}"/>`);
+  return legend([[sw('l','background:var(--cbat)'),'Заряд на батерията (%)'],[sw('b','background:var(--kprod)'),'Мощност на панелите (kW)'],[sw('b','background:var(--kbat)'),'Изразходвано от батерията (kW)']])+shell(W,H,'Батерия днес',o);
+}

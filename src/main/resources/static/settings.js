@@ -24,10 +24,12 @@ function placeCard(l,reload){
     sec.value='';sec.placeholder=r.solaxHasSecret?'•••••••• (запазен)':'';fillPlants(r)};
   showStatus(l);
   const refresh=h('button',{type:'button',cls:'ib',title:'Опресни данните',"aria-label":'Опресни данните за '+l.name,hidden:!l.solar,onclick:run(async()=>{showStatus(await api('/locations/'+l.id+'/refresh','POST'));say('Данните са опреснени')})},svg(ICONS.refresh));
+  const supplier=h('select',{style:'width:100%'},...[['electrohold','Electrohold'],['evn','EVN'],['energopro','Energo-Pro']].map(([v,n])=>h('option',{value:v},n)));
+  supplier.value=l.supplier||'electrohold';
   const fields=h('div',{cls:'fields',hidden:!l.solar},
-    h('span',{},'Client ID'),cid,h('span',{},'Client Secret'),sec,plantLabel,plant,status,battery,capacity);
+    h('span',{},'Доставчик на ток'),supplier,h('span',{},'Client ID'),cid,h('span',{},'Client Secret'),sec,plantLabel,plant,status,battery,capacity);
   solar.addEventListener('change',()=>{fields.hidden=refresh.hidden=!solar.checked});
-  const save=async()=>showStatus(await api('/locations/'+l.id,'PUT',{solar:solar.checked,
+  const save=async()=>showStatus(await api('/locations/'+l.id,'PUT',{solar:solar.checked,supplier:supplier.value,
     solaxClientId:cid.value,solaxClientSecret:sec.value,solaxPlantId:plant.value}));
   const el=h('div',{cls:'card'},
     h('div',{cls:'row'},h('h2',{},l.name,' ',h('span',{cls:'mut'},l.country||'')),

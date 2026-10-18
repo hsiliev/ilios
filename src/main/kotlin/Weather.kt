@@ -80,14 +80,15 @@ private class IntraArrays(
     @SerialName("cloud_cover") val cloud: List<Double?>,
     @SerialName("wind_speed_10m") val wind: List<Double?>,
     @SerialName("wind_gusts_10m") val gust: List<Double?>,
+    @SerialName("shortwave_radiation") val rad: List<Double?> = emptyList(),
 )
 
 class Day(val date: LocalDate, val tMax: Double?, val tMin: Double?, val rainMm: Double, val radiationMj: Double)
 
-class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean, val country: String? = null)
+class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean, val country: String? = null, val supplier: String = DEFAULT_SUPPLIER)
 
 fun locOf(r: ResultRow) = Loc(
-    r[Locations.id], r[Locations.name], r[Locations.lat], r[Locations.lon], r[Locations.tz], r[Locations.solar], r[Locations.country],
+    r[Locations.id], r[Locations.name], r[Locations.lat], r[Locations.lon], r[Locations.tz], r[Locations.solar], r[Locations.country], r[Locations.supplier],
 )
 
 fun newHttpClient(json: Json) = HttpClient(CIO) {
@@ -136,7 +137,7 @@ class WeatherService(
     fun intraday(loc: Loc, today: LocalDate): Intraday? {
         val points = transaction {
             Intraday15.selectAll().where { (Intraday15.locationId eq loc.id) and (Intraday15.day eq today.toString()) }
-                .orderBy(Intraday15.t).map { IntraPoint(it[Intraday15.t], it[Intraday15.temp], it[Intraday15.rainMm], it[Intraday15.event]) }
+                .orderBy(Intraday15.t).map { IntraPoint(it[Intraday15.t], it[Intraday15.temp], it[Intraday15.rainMm], it[Intraday15.event], it[Intraday15.radiationWm2]) }
         }
         if (points.isEmpty()) return null
         val now = ZonedDateTime.now(ZoneId.of(loc.tz)).toLocalTime().withSecond(0).withNano(0)
@@ -225,7 +226,7 @@ class WeatherService(
     private suspend fun refreshIntraday(loc: Loc) {
         val r = http.get("$forecastUrl/v1/forecast") {
             parameter("latitude", loc.lat); parameter("longitude", loc.lon)
-            parameter("minutely_15", "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_gusts_10m")
+            parameter("minutely_15", "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_gusts_10m,shortwave_radiation")
             parameter("forecast_days", 3); parameter("timezone", "auto") // a few days so "today" survives past midnight until the next refresh
         }.body<IntraResp>()
         val m = r.m
@@ -238,6 +239,7 @@ class WeatherService(
                 this[Intraday15.t] = m.time[i].substringAfter('T')
                 this[Intraday15.temp] = m.temp.getOrNull(i)
                 this[Intraday15.rainMm] = m.precipitation.getOrNull(i) ?: 0.0
+                this[Intraday15.radiationWm2] = m.rad.getOrNull(i)
                 this[Intraday15.event] = when {
                     code >= 95 -> "thunder"
                     code in 71..77 || code == 85 || code == 86 -> "snow"

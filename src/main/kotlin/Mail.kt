@@ -23,10 +23,10 @@ fun mailPortFrom(value: String?): Int {
  * MAIL_HOST (default smtp.gmail.com) and MAIL_PORT (default 587) are optional.
  */
 class Mailer(
-    private val user: String = System.getenv("MAIL_USERNAME")?.trim().orEmpty(),
-    private val password: String = System.getenv("MAIL_PASSWORD")?.trim().orEmpty(),
-    private val host: String = System.getenv("MAIL_HOST")?.trim().orEmpty().ifEmpty { "smtp.gmail.com" },
-    private val port: Int = mailPortFrom(System.getenv("MAIL_PORT")),
+    private val user: String = "", // set the sender address here to enable mail
+    private val password: String = "", // set the (app) password here to enable mail
+    private val host: String = "smtp.gmail.com",
+    private val port: Int = 587,
 ) {
 
     /** Without both settings mail is disabled and reset links go to the server log. */

@@ -21,7 +21,12 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -42,6 +47,8 @@ import java.net.URI
 import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.time.LocalTime
 import java.time.temporal.ChronoUnit
 import java.time.YearMonth
@@ -53,13 +60,12 @@ import kotlin.time.Duration.Companion.minutes
 
 // SolaX Cloud developer API (https://developer.solaxcloud.com): the API has call-count and rate limits, so there is no polling.
 // Produced energy of a past day never changes, so each day is fetched once (on connecting, then the new day every morning);
-// the battery charge is read once a day at 22:30 Sofia time. Everything is served from the database.
+// the battery charge is read hourly and cached in the database. Everything is served from the database.
 private const val RETRY_AFTER_MS = 60L * 60 * 1000 // ordinary failures: try again in an hour
 private const val QUOTA_RETRY_MS = 6L * 60 * 60 * 1000 // the call allowance is used up: it will not recover within the hour
 private const val AUTH_RETRY_MS = 12L * 60 * 60 * 1000 // wrong credentials or no access: retrying only burns calls until the user fixes them
 /** The battery charge is read once a day at this local time in Sofia (not in the place's time zone). */
 private val BATTERY_ZONE = ZoneId.of("Europe/Sofia")
-private val BATTERY_AT = LocalTime.of(22, 30)
 /** A day's production is final only after the cloud has processed the night, so yesterday is fetched from this local time. */
 private val PRODUCTION_FINAL_FROM = LocalTime.of(2, 0)
 private const val PLANT_REFRESH_MS = 7L * 24 * 60 * 60 * 1000 // panel power and battery capacity rarely change
@@ -75,7 +81,7 @@ private val NO_ACCESS = setOf(10403, 10500, 10505, 10506)
 private fun quotaError(code: Int) = SolaxError(QUOTA.getValue(code), if (code == 10405) QUOTA_RETRY_MS else RETRY_AFTER_MS)
 
 /** SolaX API host of the account's region (see "My Account" in the developer portal); EU by default, override with SOLAX_URL. */
-fun solaxBaseUrl(value: String? = System.getenv("SOLAX_URL")): String {
+fun solaxBaseUrl(value: String? = null): String {
     val v = value?.trim().orEmpty().ifEmpty { "https://openapi-eu.solaxcloud.com" }
     val uri = runCatching { URI(v) }.getOrNull()
     require(uri != null && uri.scheme in listOf("http", "https") && !uri.host.isNullOrBlank()) { "SOLAX_URL must be an http(s) URL, got '$v'" }
@@ -86,13 +92,8 @@ fun solaxBaseUrl(value: String? = System.getenv("SOLAX_URL")): String {
 fun lastProductionDay(local: ZonedDateTime): LocalDate =
     local.toLocalDate().minusDays(if (local.toLocalTime() >= PRODUCTION_FINAL_FROM) 1 else 2)
 
-/** The most recent 22:30 in Sofia that is not after [now]; a battery reading older than this is due. */
-fun lastBatterySlot(now: Instant): Instant {
-    val sofia = now.atZone(BATTERY_ZONE)
-    var slot = sofia.toLocalDate().atTime(BATTERY_AT).atZone(BATTERY_ZONE)
-    if (slot.isAfter(sofia)) slot = sofia.toLocalDate().minusDays(1).atTime(BATTERY_AT).atZone(BATTERY_ZONE)
-    return slot.toInstant()
-}
+/** The start of the current hour; a battery reading older than this is due, so the charge is read hourly. */
+fun lastBatterySlot(now: Instant): Instant = now.truncatedTo(java.time.temporal.ChronoUnit.HOURS)
 
 @Serializable private class TokenResp(val code: Int = -1, val message: String? = null, val result: TokenResult? = null)
 @Serializable private class TokenResult(@SerialName("access_token") val accessToken: String, @SerialName("expires_in") val expiresIn: Long = 0)
@@ -113,6 +114,23 @@ fun lastBatterySlot(now: Instant): Instant {
 @Serializable private class HistResp(val code: Int = -1, val message: String? = null, val result: List<HistPoint>? = null)
 @Serializable private class HistPoint(val plantLocalTime: JsonPrimitive? = null, val dataTime: JsonPrimitive? = null, val batterySOC: Double? = null, val batteryRemainings: Double? = null)
 @Serializable private class BatteryRec(val batterySOC: Double? = null, val batteryRemainings: Double? = null, val chargeDischargePower: Double? = null)
+
+/** The local date-time of a history point: SolaX's plant-local time when given, else its data time (epoch millis or UTC text). */
+private fun momentOf(p: JsonObject, zone: ZoneId): LocalDateTime? {
+    fun text(s: String?) = s?.trim()?.replace(' ', 'T')?.let { runCatching { LocalDateTime.parse(it) }.getOrNull() }
+    text(p["plantLocalTime"]?.jsonPrimitive?.contentOrNull)?.let { return it }
+    val dt = p["dataTime"]?.jsonPrimitive?.contentOrNull ?: return null
+    dt.toLongOrNull()?.let { return LocalDateTime.ofInstant(Instant.ofEpochMilli(it), zone) }
+    return text(dt)?.atZone(ZoneOffset.UTC)?.withZoneSameInstant(zone)?.toLocalDateTime()
+}
+
+/** Panel power (W) of an inverter history point: its total PV input, else the sum of the MPPT trackers' power; null when it has none. */
+private fun pvPowerOf(p: JsonObject): Double? {
+    fun num(e: kotlinx.serialization.json.JsonElement?) = (e as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
+    num(p["MPPTTotalInputPower"])?.let { return maxOf(0.0, it) }
+    val trackers = (p["mpptMap"] as? JsonObject)?.filterKeys { it.matches(Regex("MPPT\\d+Power", RegexOption.IGNORE_CASE)) }?.values?.mapNotNull { num(it) }.orEmpty()
+    return trackers.takeIf { it.isNotEmpty() }?.sumOf { maxOf(0.0, it) }
+}
 
 /** A failure with a message that is safe to show the user (never contains credentials). */
 private class SolaxError(message: String, val retryMs: Long = RETRY_AFTER_MS) : Exception(message)
@@ -185,6 +203,12 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         BatteryDays.selectAll().where { BatteryDays.locationId eq locationId }.associate { LocalDate.parse(it[BatteryDays.day]) to it[BatteryDays.maxSoc] }
     }
 
+    /** Today's cached 5-minute battery charge and panel power. */
+    fun today(locationId: Long, day: LocalDate): List<TodayPoint> = transaction {
+        SolarToday.selectAll().where { (SolarToday.locationId eq locationId) and (SolarToday.day eq day.toString()) }
+            .orderBy(SolarToday.t).map { TodayPoint(it[SolarToday.t], it[SolarToday.soc], it[SolarToday.pvW], it[SolarToday.batW]) }
+    }
+
     fun infos(locationIds: List<Long>): Map<Long, SolaxInfo> = transaction {
         Solax.selectAll().where { Solax.locationId inList locationIds }
             .associate {
@@ -213,6 +237,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
     private fun wipePlantHistory(locationId: Long) = transaction {
         Produced.deleteWhere { Produced.locationId eq locationId }
         BatteryDays.deleteWhere { BatteryDays.locationId eq locationId }
+        SolarToday.deleteWhere { SolarToday.locationId eq locationId }
         Solax.update({ Solax.locationId eq locationId }) { it.clearPlantData() }
         Unit
     }
@@ -413,7 +438,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
     }
 
     /**
-     * Reads the battery charge once a day: when a reading is older than the latest 22:30 Sofia time (or there is none yet, e.g.
+     * Reads the battery charge hourly: when a reading is older than the start of the current hour (or there is none yet, e.g.
      * right after connecting). Failures are retried at most hourly. Never throws (except cancellation); the outcome goes to
      * [Solax.batteryStatus].
      */
@@ -436,6 +461,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             val soc = readBattery(loc.id, row, Session(loc.id, row), plantId, type, now.toEpochMilli())
             val at = now.atZone(BATTERY_ZONE).format(stamp)
             setBatteryStatus(loc.id, if (soc == null) "Solax не върна данни за батерията" else "Заряд на батерията: ${"%.0f".format(java.util.Locale.forLanguageTag("bg"), soc)}% към $at (София)")
+            cacheToday(loc, now)
         } catch (e: CancellationException) {
             throw e
         } catch (e: SolaxError) {
@@ -444,6 +470,55 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         } catch (e: Exception) {
             System.err.println("SolaX battery read failed for place ${loc.id}: ${e::class.simpleName}")
             setBatteryStatus(loc.id, "Зарядът на батерията не може да се прочете – ще опитам отново по-късно")
+        }
+    }
+
+    /**
+     * Caches today's battery charge and panel power at the finest step SolaX's history allows (5 minutes, windows of at most
+     * 12 hours, so up to three calls per kind). The battery and inverter histories are merged by time and replace what was
+     * stored. Never throws (except cancellation); a failure keeps the previous data.
+     */
+    private suspend fun cacheToday(loc: Loc, now: Instant) {
+        try {
+            val row = transaction { Solax.selectAll().where { Solax.locationId eq loc.id }.singleOrNull() } ?: return
+            val plantId = row[Solax.plantId] ?: return; val type = row[Solax.businessType] ?: return
+            val session = Session(loc.id, row)
+            val sns = inverterSerials(loc.id, row, session, plantId, type)
+            if (sns.isEmpty()) return
+            val zone = ZoneId.of(loc.tz)
+            val day = now.atZone(zone).toLocalDate()
+            val from = day.atStartOfDay(zone).toInstant()
+            fun slot(m: LocalDateTime) = "%02d:%02d".format(m.hour, m.minute / 5 * 5)
+            val soc = HashMap<String, MutableList<Double>>(); val pv = HashMap<String, MutableList<Double>>(); val bat = HashMap<String, MutableList<Double>>()
+            for (p in session.history(sns, type, 2, from, now)) {
+                val m = momentOf(p, zone)?.takeIf { it.toLocalDate() == day } ?: continue
+                p["batterySOC"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.let { soc.getOrPut(slot(m)) { ArrayList() } += it }
+                p["chargeDischargePower"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.let { bat.getOrPut(slot(m)) { ArrayList() } += it }
+            }
+            try { // the panel bars are optional: without them the charge curve is still worth keeping
+                for (p in session.history(sns, type, 1, from, now)) {
+                    val m = momentOf(p, zone)?.takeIf { it.toLocalDate() == day } ?: continue
+                    pvPowerOf(p)?.let { pv.getOrPut(slot(m)) { ArrayList() } += it }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                System.err.println("SolaX inverter history failed for place ${loc.id}: ${(e as? SolaxError)?.message ?: e::class.simpleName}")
+            }
+            val slots = (soc.keys + pv.keys + bat.keys).sorted()
+            if (slots.isEmpty()) return
+            transaction {
+                SolarToday.deleteWhere { SolarToday.locationId eq loc.id }
+                SolarToday.batchInsert(slots) { t ->
+                    this[SolarToday.locationId] = loc.id; this[SolarToday.day] = day.toString(); this[SolarToday.t] = t
+                    this[SolarToday.soc] = soc[t]?.average(); this[SolarToday.pvW] = pv[t]?.sum() // several inverters add up
+                    this[SolarToday.batW] = bat[t]?.sum() // several batteries add up
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            System.err.println("SolaX today's history failed for place ${loc.id}: ${(e as? SolaxError)?.message ?: e::class.simpleName}")
         }
     }
 
@@ -605,6 +680,32 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             }.body<RealtimeResp>()
             check(r.code, r.message)
             r.result.orEmpty()
+        }
+
+        /**
+         * The history points of [deviceType] (1 inverter, 2 battery under the inverters) between [from] and [to] at 5-minute
+         * steps, in windows of at most 12 hours (the API's limit).
+         */
+        suspend fun history(inverterSns: List<String>, type: Int, deviceType: Int, from: Instant, to: Instant): List<JsonObject> {
+            val out = ArrayList<JsonObject>()
+            var start = from
+            while (start < to) {
+                val end = minOf(start.plus(12, ChronoUnit.HOURS), to)
+                out += authed { t ->
+                    val text = http.get("$baseUrl/openapi/v2/device/history_data") {
+                        header("Authorization", "bearer $t")
+                        parameter("snList", inverterSns.joinToString(",")); parameter("deviceType", deviceType)
+                        if (deviceType == 2) parameter("requestSnType", 1)
+                        parameter("businessType", type); parameter("startTime", start.toEpochMilli()); parameter("endTime", end.toEpochMilli())
+                        parameter("timeInterval", 5)
+                    }.bodyAsText()
+                    val r = plantsJson.decodeFromString<HistResp>(text)
+                    check(r.code, r.message)
+                    plantsJson.parseToJsonElement(text).jsonObject["result"]?.takeIf { it is JsonArray }?.jsonArray?.mapNotNull { it as? JsonObject }.orEmpty()
+                }
+                start = end
+            }
+            return out
         }
 
         /**

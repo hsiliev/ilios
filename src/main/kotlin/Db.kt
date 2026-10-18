@@ -32,6 +32,7 @@ object Locations : Table("locations") {
     val lon = double("lon")
     val tz = varchar("tz", 60).default("UTC")
     val solar = bool("solar").default(false) // whether a solar system applies here
+    val supplier = varchar("supplier", 20).default("electrohold") // electricity supplier (key of TARIFFS) for the night-charge advice
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -93,6 +94,17 @@ object BatteryDays : Table("battery_days") {
     override val primaryKey = PrimaryKey(locationId, day)
 }
 
+/** Today's battery charge (%) and panel power (W) in 5-minute steps, the finest SolaX's history offers; replaced on every hourly read. */
+object SolarToday : Table("solar_today") {
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val day = varchar("day", 10) // ISO date, local to the place
+    val t = varchar("t", 5) // HH:mm, local to the place
+    val soc = double("soc").nullable()
+    val pvW = double("pv_w").nullable()
+    val batW = double("bat_w").nullable() // battery power: positive = charging, negative = discharging
+    override val primaryKey = PrimaryKey(locationId, day, t)
+}
+
 /** Stored 15-minute forecast steps (today and the next days); replaced on every refresh. */
 object Intraday15 : Table("intraday") {
     val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
@@ -101,6 +113,7 @@ object Intraday15 : Table("intraday") {
     val temp = double("temp").nullable()
     val rainMm = double("rain_mm")
     val event = varchar("event", 10).nullable()
+    val radiationWm2 = double("radiation_wm2").nullable() // shortwave radiation, W/m²
     override val primaryKey = PrimaryKey(locationId, day, t)
 }
 
@@ -123,7 +136,7 @@ fun initDb(path: String) {
         val hadAc = runCatching { exec("SELECT ac_kwh FROM produced WHERE 1 = 0") }.isSuccess
         // connected places read the battery devices' capacity together with the plant record: do that once after the upgrade
         val hadDeviceKwh = runCatching { exec("SELECT battery_device_kwh FROM solax WHERE 1 = 0") }.isSuccess
-        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, GeocodeCache)
+        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, SolarToday, GeocodeCache)
         if (!hadAc) exec("UPDATE solax SET produced_through = NULL")
         if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")
         // obsolete: the old per-user settings table and the typed-in performance ratio (now calibrated from SolaX data)
