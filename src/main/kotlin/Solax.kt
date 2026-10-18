@@ -547,7 +547,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
 
     /**
      * Caches the battery's discharge power of the last [DISCHARGE_DAYS] finished days (battery history, 15-minute steps) for the
-     * estimate of the rest of today: one missing day per call so the burst stays small (two requests per day), failures retried
+     * estimate of the rest of today: all missing days in one pass (two requests per day), failures retried
      * at most hourly. Never throws (except cancellation).
      */
     suspend fun dischargeHistoryIfDue(loc: Loc, now: Instant = Instant.now()) = lock.withLock {
@@ -562,27 +562,30 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             DischargeDays.deleteWhere { (DischargeDays.locationId eq loc.id) and (DischargeDays.day less first.toString()) }
             DischargeDays.selectAll().where { DischargeDays.locationId eq loc.id }.map { it[DischargeDays.day] }.toSet()
         }
-        val day = generateSequence(first) { it.plusDays(1) }.takeWhile { it < today }.firstOrNull { it.toString() !in have } ?: return@withLock
+        val missing = generateSequence(first) { it.plusDays(1) }.takeWhile { it < today }.filter { it.toString() !in have }.toList()
+        if (missing.isEmpty()) return@withLock
         dischargeTryAt[loc.id] = now.toEpochMilli() + RETRY_AFTER_MS
         try {
             val session = Session(loc.id, row)
             val sns = inverterSerials(loc.id, row, session, plantId, type)
             if (sns.isEmpty()) return@withLock
-            val perMoment = HashMap<LocalDateTime, Double>() // several batteries add up
-            for (p in session.history(sns, type, 2, day.atStartOfDay(zone).toInstant(), day.plusDays(1).atStartOfDay(zone).toInstant())) {
-                val m = momentOf(p, zone)?.takeIf { it.toLocalDate() == day } ?: continue
-                val w = p["chargeDischargePower"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: continue // negative = discharging
-                perMoment.merge(m, maxOf(0.0, -w), Double::plus)
-            }
-            if (perMoment.isEmpty()) return@withLock // no battery data (yet): try again later
-            val slots = perMoment.entries.groupBy({ "%02d:%02d".format(it.key.hour, it.key.minute / 15 * 15) }, { it.value }).toSortedMap()
-            transaction {
-                DischargeDays.deleteWhere { (DischargeDays.locationId eq loc.id) and (DischargeDays.day eq day.toString()) }
-                DischargeDays.batchInsert(slots.entries) { (t, w) ->
-                    this[DischargeDays.locationId] = loc.id; this[DischargeDays.day] = day.toString(); this[DischargeDays.t] = t; this[DischargeDays.dischargeW] = w.average()
+            for (day in missing) { // at most 7 days, two requests each, once; afterwards one new day a day
+                val perMoment = HashMap<LocalDateTime, Double>() // several batteries add up
+                for (p in session.history(sns, type, 2, day.atStartOfDay(zone).toInstant(), day.plusDays(1).atStartOfDay(zone).toInstant())) {
+                    val m = momentOf(p, zone)?.takeIf { it.toLocalDate() == day } ?: continue
+                    val w = p["chargeDischargePower"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: continue // negative = discharging
+                    perMoment.merge(m, maxOf(0.0, -w), Double::plus)
+                }
+                if (perMoment.isEmpty()) return@withLock // no battery data (yet): try again later
+                val slots = perMoment.entries.groupBy({ "%02d:%02d".format(it.key.hour, it.key.minute / 15 * 15) }, { it.value }).toSortedMap()
+                transaction {
+                    DischargeDays.deleteWhere { (DischargeDays.locationId eq loc.id) and (DischargeDays.day eq day.toString()) }
+                    DischargeDays.batchInsert(slots.entries) { (t, w) ->
+                        this[DischargeDays.locationId] = loc.id; this[DischargeDays.day] = day.toString(); this[DischargeDays.t] = t; this[DischargeDays.dischargeW] = w.average()
+                    }
                 }
             }
-            dischargeTryAt.remove(loc.id) // the next missing day may follow at once, on the next loop pass
+            dischargeTryAt.remove(loc.id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: SolaxError) {

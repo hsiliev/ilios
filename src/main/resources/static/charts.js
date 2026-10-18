@@ -145,10 +145,19 @@ document.addEventListener('pointerdown',showCallout);
 document.addEventListener('pointerleave',()=>{if(callout)callout.hidden=true});
 
 // today's battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes)
-export function batteryChart(pts,fc=[],now='',load=[]){
+export const MIN_SOC=10; // the battery's discharge floor (%)
+export function batteryChart(pts,fc=[],now='',load=[],bat=null){
   const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,n=288,step=iw/n,ticks=5;
   const last=pts.length?pts[pts.length-1].t:now,future=fc.filter(p=>p.t>last&&p.pvW>0);
-  const est=load.filter(p=>p.t>last); // expected discharge for the rest of the day: the mean of the last days at that time
+  // expected discharge for the rest of the day: the mean of the last days at that time, limited by what the battery can still give above its
+  // floor; the sun refills it in the steps where the forecast panel power exceeds that expected use
+  const soc=[...pts].reverse().find(p=>p.soc!=null)?.soc??bat?.soc;
+  let E=bat?.batteryKwh>0&&soc!=null?Math.max(0,soc-MIN_SOC)/100*bat.batteryKwh:null;const Emax=bat?.batteryKwh*(100-MIN_SOC)/100;
+  const est=load.filter(p=>p.t>last).map(p=>{
+    if(E==null)return p;
+    const d=p.w/1000*.25,sun=(fc.find(f=>f.t===p.t)?.pvW||0)/1000*.25,take=Math.min(d,E);
+    E=Math.min(Emax,E-take+Math.max(0,sun-d));
+    return {t:p.t,w:take/.25*1000}});
   const negKw=p=>p.batW<0?-p.batW/1000:0;
   const maxKw=Math.max(0.5,...pts.map(p=>(p.pvW||0)/1000),...future.map(p=>p.pvW/1000))*1.1,kstep=stepFor(maxKw,ticks,[.5,1,2,5,10,20,50,100]);
   const maxD=Math.max(0,...pts.map(negKw),...est.map(p=>p.w/1000)),hasD=maxD>0;
