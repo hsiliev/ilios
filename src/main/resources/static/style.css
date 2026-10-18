@@ -67,5 +67,10 @@ body{font-size:14px}header{padding:8px 12px}main{padding:10px 8px}
 button,input,select{min-height:38px}.ib{padding:8px}
 table{display:block;overflow-x:auto}
 }
-.recs{padding:4px 14px 14px}.recgrid{display:grid;grid-template-columns:auto auto 1fr;align-items:start;gap:8px 8px}
+.recgrid{display:grid;grid-template-columns:auto auto 1fr;align-items:start;gap:8px 8px}
 .rec{display:contents;font-size:14px}.rec>svg{margin-top:2px}.rec>b{white-space:nowrap}.rec .rt{display:flex;align-items:flex-start;gap:6px}.rec .rt svg{flex:none;margin-top:2px}
+.sec{margin:8px 0}.sec>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;user-select:none}
+.sec>summary::-webkit-details-marker{display:none}.sec>summary h3{margin:6px 0}.sec[open]>summary .chev{transform:rotate(90deg)}
+
+.sec[open]>summary{margin-bottom:6px}
+

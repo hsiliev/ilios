@@ -48,9 +48,11 @@ function placeSummary(r){
         return chip('Утре: '+f1(tom.kwh)+' kWh – батерията '+(full?'може':'не може')+' да се зареди напълно от слънцето',svg(ICONS[full?'yes_':'no_'],'sm ev '+(full?'okc':'nox')),f1(tom.kwh)+' kWh')})()));
 }
 
+const sec=(t,...c)=>h('details',{cls:'sec',open:true},h('summary',{},svg(ICONS.chev,'chev sm'),h('h3',{},t)),...c);
+
 function recommendations(r){
   const w=r.watering,n=r.night,crops=[['plants','Растения'],['grass','Трева'],['trees','Дървета']];
-  return h('div',{cls:'recs'},h('h3',{},'Препоръки'),
+  return sec('Препоръки',
     h('div',{cls:'recgrid'},
     ...crops.map(([k,l])=>h('div',{cls:'rec'},svg(ICONS[k],'crop sm'),h('b',{},l),h('span',{cls:'rt'},svg(ICONS[w[k].water],'water sm '+w[k].water),w[k].text))),
     ...(n?[h('div',{cls:'rec'},batIcon(n.charge?20:100,'sm'),h('b',{},'Батерия през нощта'),h('span',{cls:'rt'},n.text))]:[]),
@@ -59,16 +61,17 @@ function recommendations(r){
 
 function reportCard(r,i,state){
   if(r.error)return h('div',{cls:'card'},h('h2',{},r.name,r.country?[' ',h('span',{cls:'mut'},r.country)]:''),h('div',{cls:'yes'},r.error));
-  const b=r.battery,html=(t,s)=>{const d=h('div');d.innerHTML=s;return t?[h('h3',{},t),d]:[d]};
-  return h('details',{cls:'card place',open:state[r.id]??i===0,      ontoggle:e=>{const st=readOpen();st[r.id]=e.target.open;localStorage.setItem(OPEN_KEY,JSON.stringify(st))}},
+  const b=r.battery,html=s=>{const d=h('div');d.innerHTML=s;return [d]};
+  const noSolar=h('p',{cls:'mut'},'Чака се връзка със Solax – въведете Client ID и Secret в ',h('a',{href:'#settings'},'настройките'),'. Мощността на панелите и капацитетът на батерията се вземат оттам.');
+  return h('details',{cls:'card place',open:state[r.id]??i===0,      ontoggle:e=>{if(e.target!==e.currentTarget)return;const st=readOpen();st[r.id]=e.target.open;localStorage.setItem(OPEN_KEY,JSON.stringify(st))}},
     placeSummary(r),
-    h('div',{cls:'pbody'+(r.solar?' two':'')},
-    h('div',{cls:'col'},
-    ...html('Седмични температури и валежи',weatherChart(r.days,r.today)),
-    ...(r.intraday?html('Времето днес',intraChart(r.intraday)):[h('h3',{},'Времето днес'),h('p',{cls:'mut'},'Данните за деня се зареждат…')]),
-    ),
-    ...(r.solar?[h('div',{cls:'col'},
-    ...(b?[h('h3',{},'Седмично слънце'),...html(null,powerChart(r.days,r.today,b.batteryKwh)),h('h3',{},'Батерия днес'),...(r.batteryToday?.length||r.pvForecast?.length?html(null,batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'')):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')])]:r.solar?[h('h3',{},'Седмично слънце'),h('p',{cls:'mut'},'Чака се връзка със Solax – въведете Client ID и Secret в ',h('a',{href:'#settings'},'настройките'),'. Мощността на панелите и капацитетът на батерията се вземат оттам.')]:[]))]:[])),recommendations(r));
+    h('div',{cls:'pbody'},
+    sec('Седмични температури и валежи',...html(weatherChart(r.days,r.today))),
+    sec('Времето днес',...(r.intraday?html(intraChart(r.intraday)):[h('p',{cls:'mut'},'Данните за деня се зареждат…')])),
+    ...(r.solar?[
+      sec('Седмично слънце',...(b?html(powerChart(r.days,r.today,b.batteryKwh)):[noSolar])),
+      ...(b?[sec('Батерия днес',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.dischargeProfile||[])):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
+    recommendations(r)));
 }
 
 

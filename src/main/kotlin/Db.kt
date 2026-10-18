@@ -106,6 +106,15 @@ object SolarToday : Table("solar_today") {
     override val primaryKey = PrimaryKey(locationId, day, t)
 }
 
+/** The battery's discharge power (W) in 15-minute steps of the last 7 finished days, from SolaX's battery history; the base of the estimate for the rest of today. */
+object DischargeDays : Table("discharge_days") {
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val day = varchar("day", 10) // ISO date, local to the place
+    val t = varchar("t", 5) // HH:mm, local to the place
+    val dischargeW = double("discharge_w")
+    override val primaryKey = PrimaryKey(locationId, day, t)
+}
+
 /** Stored 15-minute forecast steps (today and the next days); replaced on every refresh. */
 object Intraday15 : Table("intraday") {
     val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
@@ -138,7 +147,7 @@ fun initDb(path: String) {
         val hadLoad = runCatching { exec("SELECT load_kwh FROM produced WHERE 1 = 0") }.isSuccess
         // connected places read the battery devices' capacity together with the plant record: do that once after the upgrade
         val hadDeviceKwh = runCatching { exec("SELECT battery_device_kwh FROM solax WHERE 1 = 0") }.isSuccess
-        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, SolarToday, GeocodeCache)
+        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, SolarToday, DischargeDays, GeocodeCache)
         if (!hadAc || !hadLoad) exec("UPDATE solax SET produced_through = NULL")
         if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")
         // obsolete: the old per-user settings table and the typed-in performance ratio (now calibrated from SolaX data)

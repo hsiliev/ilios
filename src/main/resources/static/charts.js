@@ -145,11 +145,13 @@ document.addEventListener('pointerdown',showCallout);
 document.addEventListener('pointerleave',()=>{if(callout)callout.hidden=true});
 
 // today's battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes)
-export function batteryChart(pts,fc=[],now=''){
+export function batteryChart(pts,fc=[],now='',load=[]){
   const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,n=288,step=iw/n,ticks=5;
   const last=pts.length?pts[pts.length-1].t:now,future=fc.filter(p=>p.t>last&&p.pvW>0);
+  const est=load.filter(p=>p.t>last); // expected discharge for the rest of the day: the mean of the last days at that time
+  const negKw=p=>p.batW<0?-p.batW/1000:0;
   const maxKw=Math.max(0.5,...pts.map(p=>(p.pvW||0)/1000),...future.map(p=>p.pvW/1000))*1.1,kstep=stepFor(maxKw,ticks,[.5,1,2,5,10,20,50,100]);
-  const maxD=Math.max(0,...pts.map(p=>p.batW<0?-p.batW/1000:0)),hasD=maxD>0;
+  const maxD=Math.max(0,...pts.map(negKw),...est.map(p=>p.w/1000)),hasD=maxD>0;
   // the zone below the x axis (battery consumption) only exists when there is any discharge
   // both zones share one kW scale: the same number of pixels per kW above and below the axis
   const nneg=hasD?Math.ceil(maxD/kstep):0,ihT=ih*ticks/(ticks+nneg),ihB=ih-ihT,midY=T+ihT,dmax=nneg*kstep;
@@ -162,9 +164,11 @@ export function batteryChart(pts,fc=[],now=''){
   o+=`<text transform="translate(12 ${T+ihT/2}) rotate(-90)" class="tx" text-anchor="middle">Мощност на панелите (kW)</text><text transform="translate(${W-8} ${T+ihT/2}) rotate(90)" class="tx" text-anchor="middle">Заряд на батерията (%)</text>`;
   for(let hr=0;hr<=24;hr+=3){const xx=L+step*hr*12;o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`}
   pts.forEach(p=>{const v=(p.pvW||0)/1000;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${yk(v)}" width="${bw}" height="${midY-yk(v)}" class="kprod"/>`}});
-  pts.forEach(p=>{const v=p.batW<0?-p.batW/1000:0;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});
+  pts.forEach(p=>{const v=negKw(p);if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});
   // pale bars: Open-Meteo's forecast (15-minute steps) for the rest of the day
   future.forEach(p=>{const bw=step*3*.9;o+=`<rect x="${L+step*at(p.t)+step*1.5-bw/2}" y="${yk(p.pvW/1000)}" width="${bw}" height="${midY-yk(p.pvW/1000)}" class="kfc"/><rect x="${L+step*at(p.t)}" y="${T}" width="${step*3}" height="${ih}" class="hit" data-tip="${p.t}|прогноза ${num(p.pvW/1000,2)} kW"/>`});
+  // pale red bars: the mean battery discharge of the last days at that time (15-minute steps) for the rest of the day
+  est.forEach(p=>{const v=p.w/1000,bw=step*3*.9;if(v>0)o+=`<rect x="${L+step*at(p.t)+step*1.5-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbatf"/><rect x="${L+step*at(p.t)}" y="${T}" width="${step*3}" height="${ih}" class="hit" data-tip="${p.t}|очаквано от батерията ${num(v,2)} kW"/>`});
   const s=pts.filter(p=>p.soc!=null);
   if(s.length)o+=`<polyline points="${s.map(p=>(L+step*(at(p.t)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc"/>`;
   pts.forEach(p=>o+=`<rect x="${L+step*at(p.t)}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${p.t}${p.pvW!=null?'|панели '+num(p.pvW/1000,2)+' kW':''}${p.batW<0?'|от батерията '+num(-p.batW/1000,2)+' kW':''}${p.soc!=null?'|батерия '+num(p.soc,0)+'%':''}"/>`);

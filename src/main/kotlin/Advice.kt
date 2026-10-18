@@ -82,12 +82,16 @@ class Intraday(val now: String, val stepMin: Int, val points: List<IntraPoint>)
 @Serializable
 class TodayPoint(val t: String, val soc: Double?, val pvW: Double?, val batW: Double? = null)
 
+/** The battery's expected discharge power (W) at a time of day (HH:mm). */
+@Serializable
+class DischargePoint(val t: String, val w: Double)
+
 @Serializable
 class Report(
     val id: Long, val name: String, val solar: Boolean = false, val today: String = "", val days: List<DayPoint> = emptyList(),
     val watering: Watering? = null, val battery: Battery? = null, val intraday: Intraday? = null, val error: String? = null, val country: String? = null,
     val batteryToday: List<TodayPoint> = emptyList(), val pvForecast: List<TodayPoint> = emptyList(),
-    val night: NightCharge? = null, val missed: MissedCharge? = null,
+    val night: NightCharge? = null, val missed: MissedCharge? = null, val dischargeProfile: List<DischargePoint> = emptyList(),
 )
 
 /** Share of a day's consumption that falls while the sun is up (the rest is evening and night, when the battery serves it anyway). */
@@ -172,6 +176,7 @@ fun buildReport(
     loc: Loc, days: List<Day>, today: LocalDate, intraday: Intraday?,
     produced: Map<LocalDate, Double> = emptyMap(), plant: SolaxPlant? = null, ac: Map<LocalDate, Double> = emptyMap(),
     maxSoc: Map<LocalDate, Double> = emptyMap(), batteryToday: List<TodayPoint> = emptyList(), load: Map<LocalDate, Double> = emptyMap(),
+    dischargeProfile: List<DischargePoint> = emptyList(),
 ): Report {
     val kwp = plant?.kwp ?: 0.0 // installed PV power comes from SolaX; without it there is no estimate
     val ratio = calibratedRatio(days, produced, kwp, today)
@@ -211,6 +216,7 @@ fun buildReport(
     val battery = if (loc.solar && kwp > 0) Battery(plant?.batteryKwh ?: 0.0, plant?.soc, plant?.remainingKwh, plant?.powerW, plant?.readAt) else null
     return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday, country = loc.country,
         batteryToday = if (battery != null) batteryToday else emptyList(),
+        dischargeProfile = if (battery != null) dischargeProfile else emptyList(),
         // expected panel power of today's 15-minute steps: installed kWp x radiation (W/m² over 1000) x the calibrated yield ratio
         pvForecast = if (battery != null && kwp > 0) intraday?.points.orEmpty().filter { it.radWm2 != null }
             .map { TodayPoint(it.t, null, round(kwp * it.radWm2!! * ratio)) } else emptyList(),
