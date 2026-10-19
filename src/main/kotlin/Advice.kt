@@ -80,11 +80,14 @@ class Intraday(val now: String, val stepMin: Int, val points: List<IntraPoint>)
 
 /** One 5-minute step of today's battery charge (%) and panel power (W) from SolaX; t is local HH:mm. */
 @Serializable
-class TodayPoint(val t: String, val soc: Double?, val pvW: Double?, val batW: Double? = null)
+class TodayPoint(val t: String, val soc: Double?, val pvW: Double?, val batW: Double? = null, val gridW: Double? = null)
 
 /** The battery's expected discharge power (W) at a time of day (HH:mm). */
 @Serializable
 class DischargePoint(val t: String, val w: Double)
+
+/** One stored 5-minute step of a finished day: battery discharge, home consumption and power drawn from the grid, in W (null = not reported). */
+class LoadPoint(val t: String, val dischargeW: Double, val loadW: Double?, val gridW: Double?)
 
 @Serializable
 class Report(
@@ -92,6 +95,7 @@ class Report(
     val watering: Watering? = null, val battery: Battery? = null, val intraday: Intraday? = null, val error: String? = null, val country: String? = null,
     val batteryToday: List<TodayPoint> = emptyList(), val pvForecast: List<TodayPoint> = emptyList(),
     val night: NightCharge? = null, val missed: MissedCharge? = null, val dischargeProfile: List<DischargePoint> = emptyList(),
+    val estimate: Estimate? = null, // the rest of today in 5-minute steps, from the previous days' consumption pattern, the weather and the solar forecast
 )
 
 /** Share of a day's consumption that falls while the sun is up (the rest is evening and night, when the battery serves it anyway). */
@@ -176,7 +180,7 @@ fun buildReport(
     loc: Loc, days: List<Day>, today: LocalDate, intraday: Intraday?,
     produced: Map<LocalDate, Double> = emptyMap(), plant: SolaxPlant? = null, ac: Map<LocalDate, Double> = emptyMap(),
     maxSoc: Map<LocalDate, Double> = emptyMap(), batteryToday: List<TodayPoint> = emptyList(), load: Map<LocalDate, Double> = emptyMap(),
-    dischargeProfile: List<DischargePoint> = emptyList(),
+    dischargeProfile: List<DischargePoint> = emptyList(), loadHistory: List<Map<String, Double>> = emptyList(),
 ): Report {
     val kwp = plant?.kwp ?: 0.0 // installed PV power comes from SolaX; without it there is no estimate
     val ratio = calibratedRatio(days, produced, kwp, today)
@@ -214,12 +218,23 @@ fun buildReport(
     val watering = Watering(r1(soFar), r1(expected), advise(crops.getValue("plants")), advise(crops.getValue("grass")), advise(crops.getValue("trees")))
 
     val battery = if (loc.solar && kwp > 0) Battery(plant?.batteryKwh ?: 0.0, plant?.soc, plant?.remainingKwh, plant?.powerW, plant?.readAt) else null
-    return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday, country = loc.country,
+    val pvForecast = if (battery != null && kwp > 0) intraday?.points.orEmpty().filter { it.radWm2 != null }
+        .map { TodayPoint(it.t, null, round(kwp * it.radWm2!! * ratio)) } else emptyList()
+    // the rest of today, 5 minutes at a time: the pattern of the previous days' consumption, lifted or lowered by today's weather
+    val estimate = run {
+        val b = battery ?: return@run null; val now = intraday?.now ?: return@run null
+        val soc = batteryToday.lastOrNull { it.soc != null }?.soc ?: b.soc ?: return@run null
+        val past = loadHistory.map { it.values.sum() * 5.0 / 60 / 1000 }.average().takeUnless { it.isNaN() } ?: return@run null // mean total kWh of the pattern days
+        val todayEst = points.find { it.date == today.toString() }?.loadEst
+        val pattern = loadPattern(loadHistory, if (todayEst != null && past > 0) (todayEst / past).coerceIn(0.5, 2.0) else 1.0) ?: return@run null
+        val pv = DoubleArray(288) { i -> pvForecast.lastOrNull { slotOf(it.t) <= i }?.pvW ?: 0.0 }
+        estimateDay(slotOf(now), soc, b.batteryKwh, pattern, loc.reservedPct) { pv[it] }
+    }
+    return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday, country = loc.country, estimate = estimate,
         batteryToday = if (battery != null) batteryToday else emptyList(),
         dischargeProfile = if (battery != null) dischargeProfile else emptyList(),
         // expected panel power of today's 15-minute steps: installed kWp x radiation (W/m² over 1000) x the calibrated yield ratio
-        pvForecast = if (battery != null && kwp > 0) intraday?.points.orEmpty().filter { it.radWm2 != null }
-            .map { TodayPoint(it.t, null, round(kwp * it.radWm2!! * ratio)) } else emptyList(),
+        pvForecast = pvForecast,
         night = if (battery != null) {
                     val (dayPrice, nightPrice) = TARIFFS[loc.supplier] ?: TARIFFS.getValue(DEFAULT_SUPPLIER)
                     nightCharge(battery.batteryKwh, battery.soc, points.find { it.date == today.plusDays(1).toString() }?.kwh, dayPrice, nightPrice, homeDay ?: 0.0)

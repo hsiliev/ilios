@@ -38,7 +38,7 @@ import java.time.ZonedDateTime
 
 private const val GEOCODE_CACHE_MS = 30L * 24 * 60 * 60 * 1000
 private val json = Json { ignoreUnknownKeys = true }
-private const val REFRESH_AFTER_MS = 3L * 60 * 60 * 1000 // data older than this is refetched
+private const val REFRESH_AFTER_MS = 60 * 60 * 1000 // data older than this is refetched
 private val CHECK_EVERY = 10.minutes
 const val PAST_DAYS = 14
 const val FUTURE_DAYS = 14
@@ -85,10 +85,10 @@ private class IntraArrays(
 
 class Day(val date: LocalDate, val tMax: Double?, val tMin: Double?, val rainMm: Double, val radiationMj: Double)
 
-class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean, val country: String? = null, val supplier: String = DEFAULT_SUPPLIER)
+class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean, val country: String? = null, val supplier: String = DEFAULT_SUPPLIER, val reservedPct: Int = DEFAULT_RESERVE)
 
 fun locOf(r: ResultRow) = Loc(
-    r[Locations.id], r[Locations.name], r[Locations.lat], r[Locations.lon], r[Locations.tz], r[Locations.solar], r[Locations.country], r[Locations.supplier],
+    r[Locations.id], r[Locations.name], r[Locations.lat], r[Locations.lon], r[Locations.tz], r[Locations.solar], r[Locations.country], r[Locations.supplier], r[Locations.reservedPct],
 )
 
 fun newHttpClient(json: Json) = HttpClient(CIO) {
@@ -99,7 +99,7 @@ fun newHttpClient(json: Json) = HttpClient(CIO) {
 
 /**
  * Reads weather only from the database. A background loop (see [refreshLoop]) fills it from Open-Meteo:
- * on start-up and then whenever a place's data is older than three hours. Places are also fetched when added.
+ * on start-up and then whenever a place's data is older than an hour. Places are also fetched when added.
  */
 class WeatherService(
     private val http: HttpClient,
@@ -146,7 +146,7 @@ class WeatherService(
 
     // ---- refresh (the only code that talks to the forecast API) ----
 
-    /** Runs until cancelled: refetches places whose data is missing or older than three hours. */
+    /** Runs until cancelled: refetches places whose data is missing or older than an hour. */
     suspend fun refreshLoop() {
         while (true) {
             try {

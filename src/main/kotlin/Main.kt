@@ -50,11 +50,11 @@ class HttpError(val status: HttpStatusCode, message: String) : Exception(message
 @Serializable class Me(val email: String)
 @Serializable class NewLocation(val name: String = "", val country: String? = null, val lat: Double = 0.0, val lon: Double = 0.0, val tz: String? = null)
 @Serializable class PlaceSettings(
-    val solar: Boolean, val supplier: String? = null,
+    val solar: Boolean, val supplier: String? = null, val reservedPct: Int? = null,
     val solaxClientId: String = "", val solaxClientSecret: String = "", val solaxPlantId: String = "",
 )
 @Serializable class LocationOut(
-    val id: Long, val name: String, val country: String?, val solar: Boolean, val supplier: String = DEFAULT_SUPPLIER,
+    val id: Long, val name: String, val country: String?, val solar: Boolean, val supplier: String = DEFAULT_SUPPLIER, val reservedPct: Int = DEFAULT_RESERVE,
     val solaxClientId: String = "", val solaxPlantId: String = "", val solaxHasSecret: Boolean = false, val solaxStatus: String = "",
     val solaxBatteryStatus: String = "", val solaxBatteryInfo: String = "", val solaxPlants: List<PlantOption> = emptyList(), // the secret is never sent back
 )
@@ -91,7 +91,7 @@ fun main() {
 }
 
 private fun locationOut(r: ResultRow, info: SolaxInfo?) = LocationOut(
-    r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar], r[Locations.supplier],
+    r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar], r[Locations.supplier], r[Locations.reservedPct],
     info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(), info?.batteryStatus.orEmpty(), info?.batteryInfo.orEmpty(), info?.plants.orEmpty(),
 )
 
@@ -207,10 +207,12 @@ fun Application.module() {
                 val lid = call.parameters["id"]?.toLongOrNull() ?: badRequest("Невалиден идентификатор")
                 val p = call.receive<PlaceSettings>()
                 if (p.supplier != null && p.supplier !in TARIFFS) badRequest("Непознат доставчик")
+                if (p.reservedPct != null && p.reservedPct !in 0..MAX_RESERVE) badRequest("Резервът трябва да е между 0 и $MAX_RESERVE %")
                 val updated = transaction {
                     Locations.update({ (Locations.id eq lid) and (Locations.userId eq uid) }) {
                         it[solar] = p.solar
                         if (p.supplier != null) it[supplier] = p.supplier
+                        if (p.reservedPct != null) it[reservedPct] = p.reservedPct
                     }
                 }
                 if (updated == 0) throw HttpError(HttpStatusCode.NotFound, "Няма такова място")
@@ -254,6 +256,7 @@ fun Application.module() {
                             if (loc.solar) solax.today(loc.id, today) else emptyList(),
                             if (loc.solar) solax.consumption(loc.id) else emptyMap(),
                             if (loc.solar) solax.dischargeProfile(loc.id, today) else emptyList(),
+                            if (loc.solar) solax.loadDays(loc.id, today) else emptyList(),
                         )
                     }
                 }

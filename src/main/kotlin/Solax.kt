@@ -35,6 +35,7 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
@@ -134,8 +135,16 @@ private fun pvPowerOf(p: JsonObject): Double? {
     return trackers.takeIf { it.isNotEmpty() }?.sumOf { maxOf(0.0, it) }
 }
 
-/** Days of battery history behind the discharge estimate. */
+/** Days of battery history behind the discharge estimate (the profile is the mean of these). */
 private const val DISCHARGE_DAYS = 7
+/** Days of 15-minute history fetched per pass: a backlog is worked off gradually to stay under the call allowance. */
+private const val HISTORY_DAYS_PER_PASS = 3
+
+/** The first day kept in the interval history: the Monday of last week. */
+fun historyStart(today: LocalDate): LocalDate = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).minusDays(7)
+
+/** Power drawn from the grid (W, positive = import) of an inverter history point: SolaX's `gridPower` is negative while importing. Null without it. */
+private fun gridPowerOf(p: JsonObject): Double? = (p["gridPower"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.let { -it }
 
 /** A failure with a message that is safe to show the user (never contains credentials). */
 private class SolaxError(message: String, val retryMs: Long = RETRY_AFTER_MS) : Exception(message)
@@ -209,12 +218,25 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             .mapNotNull { r -> r[Produced.loadKwh]?.let { LocalDate.parse(r[Produced.day]) to it } }.toMap()
     }
 
-    /** Mean battery discharge power (W) per 15-minute step of the day over the cached past days. */
+    /** The stored consumption and grid power (W) per 5-minute step of one finished day (last week and this week are kept). */
+    fun loadDay(locationId: Long, day: LocalDate): List<LoadPoint> = transaction {
+        DischargeDays.selectAll().where { (DischargeDays.locationId eq locationId) and (DischargeDays.day eq day.toString()) }
+            .orderBy(DischargeDays.t).map { LoadPoint(it[DischargeDays.t], it[DischargeDays.dischargeW], it[DischargeDays.loadW], it[DischargeDays.gridW]) }
+    }
+
+    /** Mean battery discharge power (W) per 5-minute step of the day over the cached past days. */
     fun dischargeProfile(locationId: Long, today: LocalDate): List<DischargePoint> = transaction {
         val from = today.minusDays(DISCHARGE_DAYS.toLong()).toString()
         DischargeDays.selectAll().where { (DischargeDays.locationId eq locationId) and (DischargeDays.day greaterEq from) and (DischargeDays.day less today.toString()) }
             .map { it[DischargeDays.t] to it[DischargeDays.dischargeW] }
             .groupBy({ it.first }, { it.second }).toSortedMap().map { (t, w) -> DischargePoint(t, w.average()) }
+    }
+
+    /** The consumption (W) per 5-minute slot of each of the last [DISCHARGE_DAYS] finished days that have consumption data, oldest first. */
+    fun loadDays(locationId: Long, today: LocalDate): List<Map<String, Double>> = transaction {
+        val from = today.minusDays(DISCHARGE_DAYS.toLong()).toString()
+        DischargeDays.selectAll().where { (DischargeDays.locationId eq locationId) and (DischargeDays.day greaterEq from) and (DischargeDays.day less today.toString()) and DischargeDays.loadW.isNotNull() }
+            .groupBy({ it[DischargeDays.day] }, { it[DischargeDays.t] to it[DischargeDays.loadW]!! }).toSortedMap().values.map { it.toMap() }
     }
 
     /** The highest battery charge (%) each past day reached, where SolaX's history was fetched. */
@@ -225,7 +247,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
     /** Today's cached 5-minute battery charge and panel power. */
     fun today(locationId: Long, day: LocalDate): List<TodayPoint> = transaction {
         SolarToday.selectAll().where { (SolarToday.locationId eq locationId) and (SolarToday.day eq day.toString()) }
-            .orderBy(SolarToday.t).map { TodayPoint(it[SolarToday.t], it[SolarToday.soc], it[SolarToday.pvW], it[SolarToday.batW]) }
+            .orderBy(SolarToday.t).map { TodayPoint(it[SolarToday.t], it[SolarToday.soc], it[SolarToday.pvW], it[SolarToday.batW], it[SolarToday.gridW]) }
     }
 
     fun infos(locationIds: List<Long>): Map<Long, SolaxInfo> = transaction {
@@ -510,7 +532,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             val day = now.atZone(zone).toLocalDate()
             val from = day.atStartOfDay(zone).toInstant()
             fun slot(m: LocalDateTime) = "%02d:%02d".format(m.hour, m.minute / 5 * 5)
-            val soc = HashMap<String, MutableList<Double>>(); val pv = HashMap<String, MutableList<Double>>(); val bat = HashMap<String, MutableList<Double>>()
+            val soc = HashMap<String, MutableList<Double>>(); val pv = HashMap<String, MutableList<Double>>(); val bat = HashMap<String, MutableList<Double>>(); val grid = HashMap<String, MutableList<Double>>()
             for (p in session.history(sns, type, 2, from, now)) {
                 val m = momentOf(p, zone)?.takeIf { it.toLocalDate() == day } ?: continue
                 p["batterySOC"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.let { soc.getOrPut(slot(m)) { ArrayList() } += it }
@@ -520,13 +542,14 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
                 for (p in session.history(sns, type, 1, from, now)) {
                     val m = momentOf(p, zone)?.takeIf { it.toLocalDate() == day } ?: continue
                     pvPowerOf(p)?.let { pv.getOrPut(slot(m)) { ArrayList() } += it }
+                    gridPowerOf(p)?.let { grid.getOrPut(slot(m)) { ArrayList() } += it }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 System.err.println("SolaX inverter history failed for place ${loc.id}: ${(e as? SolaxError)?.message ?: e::class.simpleName}")
             }
-            val slots = (soc.keys + pv.keys + bat.keys).sorted()
+            val slots = (soc.keys + pv.keys + bat.keys + grid.keys).sorted()
             if (slots.isEmpty()) return
             transaction {
                 SolarToday.deleteWhere { SolarToday.locationId eq loc.id }
@@ -534,6 +557,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
                     this[SolarToday.locationId] = loc.id; this[SolarToday.day] = day.toString(); this[SolarToday.t] = t
                     this[SolarToday.soc] = soc[t]?.average(); this[SolarToday.pvW] = pv[t]?.sum() // several inverters add up
                     this[SolarToday.batW] = bat[t]?.sum() // several batteries add up
+                    this[SolarToday.gridW] = grid[t]?.sum()
                 }
             }
         } catch (e: CancellationException) {
@@ -546,9 +570,9 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
     private val dischargeTryAt = java.util.concurrent.ConcurrentHashMap<Long, Long>()
 
     /**
-     * Caches the battery's discharge power of the last [DISCHARGE_DAYS] finished days (battery history, 15-minute steps) for the
-     * estimate of the rest of today: all missing days in one pass (two requests per day), failures retried
-     * at most hourly. Never throws (except cancellation).
+     * Caches, for the finished days since the Monday of last week (battery and inverter history, 5-minute steps), the battery's
+     * discharge power, the home's consumption and the power drawn from the grid; the discharge feeds the estimate of the rest of today.
+     * Missing days are fetched [HISTORY_DAYS_PER_PASS] per pass (four requests per day), failures retried at most hourly. Never throws (except cancellation).
      */
     suspend fun dischargeHistoryIfDue(loc: Loc, now: Instant = Instant.now()) = lock.withLock {
         val row = transaction { Solax.selectAll().where { Solax.locationId eq loc.id }.singleOrNull() } ?: return@withLock
@@ -557,31 +581,51 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         if ((dischargeTryAt[loc.id] ?: 0L) > now.toEpochMilli()) return@withLock
         val zone = ZoneId.of(loc.tz)
         val today = now.atZone(zone).toLocalDate()
-        val first = today.minusDays(DISCHARGE_DAYS.toLong())
+        val first = historyStart(today)
         val have = transaction {
             DischargeDays.deleteWhere { (DischargeDays.locationId eq loc.id) and (DischargeDays.day less first.toString()) }
             DischargeDays.selectAll().where { DischargeDays.locationId eq loc.id }.map { it[DischargeDays.day] }.toSet()
         }
-        val missing = generateSequence(first) { it.plusDays(1) }.takeWhile { it < today }.filter { it.toString() !in have }.toList()
+        val missing = generateSequence(first) { it.plusDays(1) }.takeWhile { it < today }.filter { it.toString() !in have }.take(HISTORY_DAYS_PER_PASS).toList()
         if (missing.isEmpty()) return@withLock
         dischargeTryAt[loc.id] = now.toEpochMilli() + RETRY_AFTER_MS
         try {
             val session = Session(loc.id, row)
             val sns = inverterSerials(loc.id, row, session, plantId, type)
             if (sns.isEmpty()) return@withLock
-            for (day in missing) { // at most 7 days, two requests each, once; afterwards one new day a day
-                val perMoment = HashMap<LocalDateTime, Double>() // several batteries add up
-                for (p in session.history(sns, type, 2, day.atStartOfDay(zone).toInstant(), day.plusDays(1).atStartOfDay(zone).toInstant())) {
+            for (day in missing) { // each day once; afterwards one new day a day
+                fun slot5(m: LocalDateTime) = "%02d:%02d".format(m.hour, m.minute / 5 * 5)
+                val from = day.atStartOfDay(zone).toInstant(); val to = day.plusDays(1).atStartOfDay(zone).toInstant()
+                val bat = HashMap<LocalDateTime, Double>() // charging power, several batteries add up (positive = charging)
+                for (p in session.history(sns, type, 2, from, to)) {
                     val m = momentOf(p, zone)?.takeIf { it.toLocalDate() == day } ?: continue
-                    val w = p["chargeDischargePower"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: continue // negative = discharging
-                    perMoment.merge(m, maxOf(0.0, -w), Double::plus)
+                    val w = p["chargeDischargePower"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: continue
+                    bat.merge(m, w, Double::plus)
                 }
-                if (perMoment.isEmpty()) return@withLock // no battery data (yet): try again later
-                val slots = perMoment.entries.groupBy({ "%02d:%02d".format(it.key.hour, it.key.minute / 15 * 15) }, { it.value }).toSortedMap()
+                if (bat.isEmpty()) return@withLock // no battery data (yet): try again later
+                val pv = HashMap<LocalDateTime, Double>(); val grid = HashMap<LocalDateTime, Double>() // several inverters add up
+                try { // consumption and grid power are optional: the discharge is still worth keeping
+                    for (p in session.history(sns, type, 1, from, to)) {
+                        val m = momentOf(p, zone)?.takeIf { it.toLocalDate() == day } ?: continue
+                        pvPowerOf(p)?.let { pv.merge(m, it, Double::plus) }
+                        gridPowerOf(p)?.let { grid.merge(m, it, Double::plus) }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    System.err.println("SolaX inverter history (consumption) failed for place ${loc.id}: ${(e as? SolaxError)?.message ?: e::class.simpleName}")
+                }
+                // SolaX reports no consumption of its own: the house uses what the panels make, what the battery gives and what the grid supplies
+                val discharge = bat.entries.groupBy({ slot5(it.key) }, { maxOf(0.0, -it.value) }).toSortedMap()
+                val gridSlots = grid.entries.groupBy({ slot5(it.key) }, { it.value })
+                val loads = HashMap<String, Double>()
+                for ((m, g) in grid) { val b = bat[m] ?: continue; loads[slot5(m)] = maxOf(0.0, (pv[m] ?: 0.0) - b + g) }
+                val slots = discharge
                 transaction {
                     DischargeDays.deleteWhere { (DischargeDays.locationId eq loc.id) and (DischargeDays.day eq day.toString()) }
                     DischargeDays.batchInsert(slots.entries) { (t, w) ->
                         this[DischargeDays.locationId] = loc.id; this[DischargeDays.day] = day.toString(); this[DischargeDays.t] = t; this[DischargeDays.dischargeW] = w.average()
+                        this[DischargeDays.loadW] = loads[t]; this[DischargeDays.gridW] = gridSlots[t]?.average()
                     }
                 }
             }
