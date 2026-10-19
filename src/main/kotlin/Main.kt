@@ -40,6 +40,7 @@ private val appModule = module {
     single { Mailer() }
     single { WeatherService(get()) }
     single { SolaxService(get()) }
+    single { NightPlanner(get(), get()) }
 }
 
 class HttpError(val status: HttpStatusCode, message: String) : Exception(message)
@@ -110,6 +111,7 @@ fun Application.module() {
     val weather by inject<WeatherService>()
     val solax by inject<SolaxService>()
     val mailer by inject<Mailer>()
+    val planner by inject<NightPlanner>()
 
     fun ApplicationCall.userId(): Long =
         request.cookies[COOKIE]?.let(auth::userFor) ?: throw HttpError(HttpStatusCode.Unauthorized, "Не сте влезли в профила си")
@@ -120,6 +122,7 @@ fun Application.module() {
 
     launch { weather.refreshLoop() }
     launch { solax.syncLoop() }
+    launch { planner.loop() }
 
     routing {
         staticResources("/", "static")
@@ -257,6 +260,7 @@ fun Application.module() {
                             if (loc.solar) solax.consumption(loc.id) else emptyMap(),
                             if (loc.solar) solax.dischargeProfile(loc.id, today) else emptyList(),
                             if (loc.solar) solax.loadDays(loc.id, today) else emptyList(),
+                            if (loc.solar) nightPlans(loc.id) else emptyMap(),
                         )
                     }
                 }

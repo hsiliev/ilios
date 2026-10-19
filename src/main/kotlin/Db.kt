@@ -122,6 +122,23 @@ object DischargeDays : Table("discharge_days") {
     override val primaryKey = PrimaryKey(locationId, day, t)
 }
 
+/** The compensation energy worked out for a coming day while the battery sat at its minimum at night (one row per place and day, updated at each check). */
+object NightPlans : Table("night_plans") {
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val day = varchar("day", 10) // ISO date of the day the plan is for, local to the place
+    val foundAt = long("found_at") // when the battery was first found at its minimum
+    val checkedAt = long("checked_at")
+    val dayStartKwh = double("day_start_kwh")
+    val solarKwh = double("solar_kwh")
+    val totalKwh = double("total_kwh")
+    val targetSoc = double("target_soc")
+    val sunAt = varchar("sun_at", 5).nullable() // HH:mm from which the sun can power the whole house
+    val stopBy = varchar("stop_by", 5) // HH:mm: charging must be over when the day zone starts
+    val socNow = double("soc_now").nullable()
+    val reached = bool("reached")
+    override val primaryKey = PrimaryKey(locationId, day)
+}
+
 /** Stored 15-minute forecast steps (today and the next days); replaced on every refresh. */
 object Intraday15 : Table("intraday") {
     val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
@@ -156,7 +173,7 @@ fun initDb(path: String) {
         val hadDeviceKwh = runCatching { exec("SELECT battery_device_kwh FROM solax WHERE 1 = 0") }.isSuccess
         // days stored before the consumption and grid columns existed are fetched again once
         val hadLoadW = runCatching { exec("SELECT load_w FROM discharge_days WHERE 1 = 0") }.isSuccess
-        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, SolarToday, DischargeDays, GeocodeCache)
+        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, SolarToday, DischargeDays, NightPlans, GeocodeCache)
         if (!hadLoadW) exec("DELETE FROM discharge_days")
         if (!hadAc || !hadLoad) exec("UPDATE solax SET produced_through = NULL")
         if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")

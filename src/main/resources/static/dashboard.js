@@ -1,4 +1,4 @@
-import {$,h,say,api,f1,svg,ICONS} from './util.js';
+import {$,h,say,api,f1,dmy,svg,ICONS} from './util.js';
 import {weatherChart,intraChart,powerChart,batteryChart} from './charts.js';
 
 // collapsible place: a summary row with today's key figures, the charts and advice inside
@@ -56,6 +56,10 @@ function recommendations(r){
     h('div',{cls:'recgrid'},
     ...crops.map(([k,l])=>h('div',{cls:'rec'},svg(ICONS[k],'crop sm'),h('b',{},l),h('span',{cls:'rt'},svg(ICONS[w[k].water],'water sm '+w[k].water),w[k].text))),
     ...(n?[h('div',{cls:'rec'},batIcon(n.charge?20:100,'sm'),h('b',{},'Батерия през нощта'),h('span',{cls:'rt'},n.text))]:[]),
+    ...r.days.filter(d=>d.plan).map(d=>h('div',{cls:'rec'},batIcon(d.plan.totalKwh>0?20:100,'sm'),h('b',{},'Нощно зареждане за '+dmy(d.date)),
+      h('span',{cls:'rt'},d.plan.totalKwh>0
+        ?`Заредете батерията до ${f1(d.plan.targetSoc,0)}% с евтин нощен ток, преди да започне дневната зона (${d.plan.stopBy} ч.): ${f1(d.plan.dayStartKwh)} kWh за началото на деня`+(d.plan.sunAt?` (до ${d.plan.sunAt} ч.)`:'')+` + ${f1(d.plan.solarKwh)} kWh компенсация на слънцето = ${f1(d.plan.totalKwh)} kWh.`
+        :'Не е нужно нощно зареждане – слънцето покрива консумацията.'))),
     ...(r.missed?[h('div',{cls:'rec'},batIcon(r.missed.lostEur>0?20:100,'sm'),h('b',{},'Пропусната икономия днес'),h('span',{cls:'rt'},r.missed.text))]:[])));
 }
 
@@ -70,7 +74,7 @@ function reportCard(r,i,state){
     sec('Времето днес',...(r.intraday?html(intraChart(r.intraday)):[h('p',{cls:'mut'},'Данните за деня се зареждат…')])),
     ...(r.solar?[
       sec('Седмично слънце',...(b?html(powerChart(r.days,r.today,b.batteryKwh,r.estimate)):[noSolar])),
-      ...(b?[sec('Батерия днес',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.dischargeProfile||[],b,r.estimate)):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
+      ...(b?[sec('Батерия днес',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.dischargeProfile||[],b,r.estimate,[r.nightFrom,r.nightTo])):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
     recommendations(r)));
 }
 

@@ -78,6 +78,7 @@ export function intraChart(it){
 }
 
 export function powerChart(days,today,cap,estimate=null){
+  const planTip=p=>`Планирано зареждане през нощта до ${num(p.targetSoc,0)}% (до ${p.stopBy} ч.): ${num(p.dayStartKwh)} kWh за началото на деня${p.sunAt?` (до ${p.sunAt} ч., когато слънцето поеме консумацията)`:''} + ${num(p.solarKwh)} kWh компенсация на слънцето = ${num(p.totalKwh)} kWh`;
   const lf=d=>d.loadKwh??d.loadEst??0,maxL=Math.max(0,...days.map(lf));
   const W=900,L=52,R=16,T=66,B=44,step=(W-L-R)/days.length,iw=W-L-R;
   const max=Math.max(cap,...days.map(d=>Math.max(d.kwh,d.produced??0)),1)*1.12,ticks=5,tstep=stepFor(max,ticks,[1,2,5,10,20,50,100,200,500,1000]);
@@ -94,11 +95,12 @@ export function powerChart(days,today,cap,estimate=null){
   const measured=d=>d.date<today&&d.produced!=null,val=d=>measured(d)?d.produced:d.kwh;
   const measuredCharge=d=>d.date<today&&d.maxSoc!=null,reached=d=>d.maxSoc>=99; // 99: chargers often stop a hair below 100
   // today and later: the house (heat pump...) uses part of the sun first, so only the rest can go into the battery
-  const net=d=>val(d)-(d.homeKwh||0),fullFor=d=>measuredCharge(d)?reached(d):d.date===today&&estimate?!estimate.chargeNeeded:net(d)>=cap;
+  const net=d=>val(d)-(d.homeKwh||0),fullFor=d=>d.plan?d.plan.totalKwh<=0:measuredCharge(d)?reached(d):d.date===today&&estimate?!estimate.chargeNeeded:net(d)>=cap;
   const noData=d=>d.date<today&&!measuredCharge(d);
   // callout text explaining the check: was/will the battery be charged from the sun
   const chargeTip=d=>`${dmy(d.date)} (${wdOf(d.date)})|`+(measuredCharge(d)
     ?(reached(d)?`Слънцето е заредило батерията до 100% (макс. ${num(d.maxSoc,0)}%)`:`Слънцето не е заредило батерията напълно (макс. ${num(d.maxSoc,0)}%)`)
+    :d.plan?(d.plan.totalKwh>0?planTip(d.plan):'Не е нужно нощно зареждане: слънцето покрива деня')
     :noData(d)?'Няма данни дали слънцето е заредило батерията'
     :fullFor(d)?`Слънцето ще зареди батерията до 100% (прогноза ${num(val(d))} kWh${d.homeKwh?`, консумация през деня ≈ ${num(d.homeKwh)} kWh`:''} при капацитет ${num(cap)} kWh)`
     :`Слънцето няма да зареди батерията напълно (прогноза ${num(val(d))} kWh${d.homeKwh?`, консумация през деня ≈ ${num(d.homeKwh)} kWh`:''} при капацитет ${num(cap)} kWh)`);
@@ -147,7 +149,8 @@ document.addEventListener('pointerleave',()=>{if(callout)callout.hidden=true});
 
 // today's battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes)
 export const NIGHT_FROM=22,NIGHT_TO=6; // cheap night tariff hours (local time)
-export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null){
+export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zone=[NIGHT_FROM,NIGHT_TO]){
+  const [NF,NT]=zone;
   const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,n=288,step=iw/n,ticks=5;
   const last=pts.length?pts[pts.length-1].t:now,future=fc.filter(p=>p.t>last&&p.pvW>0);
   // expected discharge for the rest of the day: the mean of the last days at that time, limited by what the battery can still give above its
@@ -168,11 +171,11 @@ export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null){
   if(hasD){for(let k=1;k<=nneg;k++){const yy=yd(k*kstep);o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">-${num(k*kstep,kstep<1?1:0)}</text>`}
     o+=`<text transform="translate(12 ${midY+ihB/2}) rotate(-90)" class="tx" text-anchor="middle">Мрежа (kW)</text>`}
   o+=`<text transform="translate(12 ${T+ihT/2}) rotate(-90)" class="tx" text-anchor="middle">Мощност на панелите (kW)</text><text transform="translate(${W-8} ${T+ihT/2}) rotate(90)" class="tx" text-anchor="middle">Заряд на батерията (%)</text>`;
-  // tariff zones: night (NIGHT_FROM-NIGHT_TO, cheap energy) is shaded, the day zone starts when it ends
+  // tariff zones: night (NF-NT, cheap energy) is shaded, the day zone starts when it ends
   const nx=hr=>L+step*hr*12;
-  o+=`<rect x="${nx(0)}" y="${T}" width="${nx(NIGHT_TO)-nx(0)}" height="${ih}" class="nightz"/><rect x="${nx(NIGHT_FROM)}" y="${T}" width="${nx(24)-nx(NIGHT_FROM)}" height="${ih}" class="nightz"/>`
-    +`<text x="${nx(NIGHT_TO/2)}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text><text x="${(nx(NIGHT_FROM)+nx(24))/2}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text>`
-    +`<line x1="${nx(NIGHT_TO)}" x2="${nx(NIGHT_TO)}" y1="${T}" y2="${T+ih}" class="sep"/><text x="${nx(NIGHT_TO)+4}" y="${T+12}" class="tx">дневна енергия →</text>`;
+  o+=`<rect x="${nx(0)}" y="${T}" width="${nx(NT)-nx(0)}" height="${ih}" class="nightz"/><rect x="${nx(NF)}" y="${T}" width="${nx(24)-nx(NF)}" height="${ih}" class="nightz"/>`
+    +`<text x="${nx(NT/2)}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text><text x="${(nx(NF)+nx(24))/2}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text>`
+    +`<line x1="${nx(NT)}" x2="${nx(NT)}" y1="${T}" y2="${T+ih}" class="sep"/><text x="${nx(NT)+4}" y="${T+12}" class="tx">дневна енергия →</text>`;
   for(let hr=0;hr<=24;hr+=3){const xx=L+step*hr*12;o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`}
   pts.forEach(p=>{const v=(p.pvW||0)/1000;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${yk(v)}" width="${bw}" height="${midY-yk(v)}" class="kprod"/>`}});
   pts.forEach(p=>{const v=negKw(p);if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});

@@ -98,6 +98,13 @@ fun lastProductionDay(local: ZonedDateTime): LocalDate =
 /** The start of the current hour; a battery reading older than this is due, so the charge is read hourly. */
 fun lastBatterySlot(now: Instant): Instant = now.truncatedTo(java.time.temporal.ChronoUnit.HOURS)
 
+/** The battery is read hourly, and every 30 minutes while the night zone lasts (the night plan checks it then). */
+fun batterySlot(now: Instant, zone: ZoneId): Instant {
+    val local = now.atZone(zone)
+    val (from, to) = nightZone(local.toLocalDate(), zone)
+    return if (local.hour >= from || local.hour < to) now.truncatedTo(ChronoUnit.MINUTES).minusSeconds((local.minute % 30) * 60L) else lastBatterySlot(now)
+}
+
 @Serializable private class TokenResp(val code: Int = -1, val message: String? = null, val result: TokenResult? = null)
 @Serializable private class TokenResult(@SerialName("access_token") val accessToken: String, @SerialName("expires_in") val expiresIn: Long = 0)
 @Serializable private class PlantsResp(val code: Int = -1, val message: String? = null, val result: PlantsResult? = null)
@@ -496,7 +503,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             return@withLock
         }
         val readAt = row[Solax.batteryReadAt]; val tryAt = row[Solax.batteryTryAt]
-        val due = (readAt == null || readAt < lastBatterySlot(now).toEpochMilli()) &&
+        val due = (readAt == null || readAt < batterySlot(now, ZoneId.of(loc.tz)).toEpochMilli()) &&
             (tryAt == null || tryAt <= now.toEpochMilli()) // tryAt = the earliest time of the next attempt
         if (!due) return@withLock
         transaction { Solax.update({ Solax.locationId eq loc.id }) { it[Solax.batteryTryAt] = now.toEpochMilli() + RETRY_AFTER_MS } }

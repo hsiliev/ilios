@@ -34,4 +34,33 @@ class EstimateTest {
         assertFalse(e.chargeNeeded)
         assertNotNull(e.points.firstOrNull())
     }
+
+    @Test
+    fun compensationAddsTheDayStartEnergyAndTheLaterShortfall() {
+        // 1 kW consumption all day; the sun makes 3 kW from 10:00 to 12:00 (+2 kW surplus), nothing 12:00-15:00 ... then nothing again
+        val load = DoubleArray(288) { 1000.0 }
+        val pv = { i: Int -> if (i in slotOf("10:00")..<slotOf("12:00")) 3000.0 else 0.0 }
+        val c = compensation(load, pv, slotOf("06:00"), slotOf("22:00"), 20.0, 0)
+        assertEquals("10:00", c.sunAt)
+        assertEquals(4.0, c.dayStartKwh, 1e-6) // 06:00-10:00 at 1 kW
+        // total: 16 h x 1 kW - 2 h x 3 kW = 10 kWh; the sun surplus (4 kWh) is used up later, so 6 kWh more than the day start
+        assertEquals(10.0, c.totalKwh, 1e-6)
+        assertEquals(6.0, c.solarKwh, 1e-6)
+        assertEquals(50.0, c.targetSoc, 1e-6)
+    }
+
+    @Test
+    fun compensationAboveTheCapacityTargetsAFullBattery() {
+        val c = compensation(DoubleArray(288) { 1000.0 }, { 0.0 }, slotOf("06:00"), slotOf("22:00"), 10.0, 10)
+        assertEquals(16.0, c.totalKwh, 1e-6)
+        assertEquals(100.0, c.targetSoc, 1e-6)
+        assertNull(c.sunAt)
+    }
+
+    @Test
+    fun nightZoneShiftsWithSummerTime() {
+        val sofia = java.time.ZoneId.of("Europe/Sofia")
+        assertEquals(23 to 7, nightZone(java.time.LocalDate.of(2026, 7, 1), sofia))
+        assertEquals(22 to 6, nightZone(java.time.LocalDate.of(2026, 12, 1), sofia))
+    }
 }

@@ -3,6 +3,7 @@ package ilios
 import kotlinx.serialization.Serializable
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
 import kotlin.math.round
 
@@ -69,6 +70,7 @@ class DayPoint(
     val loadKwh: Double? = null, // past days: the home's measured total consumption
     val loadEst: Double? = null, // today and later: estimated total consumption from the temperature and the sun, learnt from past days
     val homeKwh: Double? = null, // today and later: expected daytime consumption of the house, which the sun has to cover before the battery gets any
+    val plan: NightPlan? = null, // the night-charge plan worked out for this day, when the battery was found at its minimum
 )
 
 /** One step of today's forecast at the finest resolution Open-Meteo offers. event: thunder | snow | rain | wind | cloud */
@@ -95,6 +97,7 @@ class Report(
     val watering: Watering? = null, val battery: Battery? = null, val intraday: Intraday? = null, val error: String? = null, val country: String? = null,
     val batteryToday: List<TodayPoint> = emptyList(), val pvForecast: List<TodayPoint> = emptyList(),
     val night: NightCharge? = null, val missed: MissedCharge? = null, val dischargeProfile: List<DischargePoint> = emptyList(),
+    val nightFrom: Int = 22, val nightTo: Int = 6, // the cheap night tariff today, local hours
     val estimate: Estimate? = null, // the rest of today in 5-minute steps, from the previous days' consumption pattern, the weather and the solar forecast
 )
 
@@ -104,6 +107,22 @@ const val DAYTIME_LOAD_SHARE = 0.6
 /** Expected daytime consumption: the mean of the last 7 finished days' measured consumption (the heat pump included) times [DAYTIME_LOAD_SHARE]. */
 fun homeDaytimeKwh(load: Map<LocalDate, Double>, today: LocalDate): Double? =
     (1L..7L).mapNotNull { load[today.minusDays(it)] }.takeIf { it.isNotEmpty() }?.average()?.times(DAYTIME_LOAD_SHARE)
+
+/**
+ * The consumption pattern (W per 5-minute slot) expected on [date]: the previous days' pattern scaled by that day's temperature- and sun-based
+ * total over the mean total of the pattern days. Null without measured consumption.
+ */
+fun loadPatternFor(
+    days: List<Day>, date: LocalDate, today: LocalDate, produced: Map<LocalDate, Double>, load: Map<LocalDate, Double>,
+    loadHistory: List<Map<String, Double>>, kwp: Double, ratio: Double,
+): DoubleArray? {
+    val samples = days.filter { it.date < today && load[it.date] != null }
+        .map { Triple(meanTemp(it.tMax, it.tMin), produced[it.date] ?: solarKwh(it, kwp, ratio), load.getValue(it.date)) }
+    val d = days.find { it.date == date }
+    val est = d?.let { estimateLoad(samples, meanTemp(it.tMax, it.tMin), produced[date] ?: solarKwh(it, kwp, ratio)) }
+    val past = loadHistory.map { it.values.sum() * 5.0 / 60 / 1000 }.average().takeUnless { it.isNaN() } ?: return null // mean total kWh of the pattern days
+    return loadPattern(loadHistory, if (est != null && past > 0) (est / past).coerceIn(0.5, 2.0) else 1.0)
+}
 
 private fun meanTemp(tMax: Double?, tMin: Double?): Double? = listOfNotNull(tMax, tMin).takeIf { it.isNotEmpty() }?.average()
 
@@ -181,6 +200,7 @@ fun buildReport(
     produced: Map<LocalDate, Double> = emptyMap(), plant: SolaxPlant? = null, ac: Map<LocalDate, Double> = emptyMap(),
     maxSoc: Map<LocalDate, Double> = emptyMap(), batteryToday: List<TodayPoint> = emptyList(), load: Map<LocalDate, Double> = emptyMap(),
     dischargeProfile: List<DischargePoint> = emptyList(), loadHistory: List<Map<String, Double>> = emptyList(),
+    plans: Map<LocalDate, NightPlan> = emptyMap(),
 ): Report {
     val kwp = plant?.kwp ?: 0.0 // installed PV power comes from SolaX; without it there is no estimate
     val ratio = calibratedRatio(days, produced, kwp, today)
@@ -194,7 +214,7 @@ fun buildReport(
         DayPoint(it.date.toString(), it.tMax, it.tMin, r1(it.rainMm), r1(solarKwh(it, kwp, ratio)), produced[it.date]?.let(::r1), ac[it.date]?.let(::r1), maxSoc[it.date]?.let(::r1),
             if (it.date < today) load[it.date]?.let(::r1) else null,
             if (it.date >= today) estimateLoad(samples, meanTemp(it.tMax, it.tMin), sun)?.let(::r1) else null,
-            if (it.date >= today) homeDay?.let(::r1) else null)
+            if (it.date >= today) homeDay?.let(::r1) else null, plans[it.date])
     }
 
     // Rain: accumulated from the start of last week through today vs. expected from tomorrow to the end of next week.
@@ -224,13 +244,11 @@ fun buildReport(
     val estimate = run {
         val b = battery ?: return@run null; val now = intraday?.now ?: return@run null
         val soc = batteryToday.lastOrNull { it.soc != null }?.soc ?: b.soc ?: return@run null
-        val past = loadHistory.map { it.values.sum() * 5.0 / 60 / 1000 }.average().takeUnless { it.isNaN() } ?: return@run null // mean total kWh of the pattern days
-        val todayEst = points.find { it.date == today.toString() }?.loadEst
-        val pattern = loadPattern(loadHistory, if (todayEst != null && past > 0) (todayEst / past).coerceIn(0.5, 2.0) else 1.0) ?: return@run null
+        val pattern = loadPatternFor(days, today, today, produced, load, loadHistory, kwp, ratio) ?: return@run null
         val pv = DoubleArray(288) { i -> pvForecast.lastOrNull { slotOf(it.t) <= i }?.pvW ?: 0.0 }
         estimateDay(slotOf(now), soc, b.batteryKwh, pattern, loc.reservedPct) { pv[it] }
     }
-    return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday, country = loc.country, estimate = estimate,
+    return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday, country = loc.country, estimate = estimate, nightFrom = nightZone(today, ZoneId.of(loc.tz)).first, nightTo = nightZone(today, ZoneId.of(loc.tz)).second,
         batteryToday = if (battery != null) batteryToday else emptyList(),
         dischargeProfile = if (battery != null) dischargeProfile else emptyList(),
         // expected panel power of today's 15-minute steps: installed kWp x radiation (W/m² over 1000) x the calibrated yield ratio

@@ -83,7 +83,7 @@ SolaX counts every API call, so nothing is polled. Produced energy of a past day
   | Weather and the solar forecast | Open-Meteo | when a place is added, at start-up if older than an hour, then every hour (the forecast kWh is calculated from the stored weather). Past days are stored once and only asked for again if some are missing |
   | Place search | Open-Meteo | once per distinct search; results are kept for 30 days |
   | Produced energy of past days | SolaX | each day once: on connecting, then yesterday after 02:00 local time |
-  | Battery charge | SolaX | hourly (and once on connecting) |
+  | Battery charge | SolaX | hourly (every 30 minutes during the night tariff zone, and once on connecting) |
   | Highest battery charge of each past day | SolaX | each day once: on connecting one day per 10-minute pass until the last week is covered, then yesterday after 02:00 local time |
   | Panel power, battery capacity | SolaX | on connecting, then weekly |
 
