@@ -23,3 +23,9 @@ export const ICONS={
   yes:DROP, light:DROP, no:DROP+'<path d="M4 4l16 16"/>',
 };
 ICONS.rain='<line x1="16" y1="13" x2="16" y2="21"/><line x1="8" y1="13" x2="8" y2="21"/><line x1="12" y1="15" x2="12" y2="23"/><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/>';
+
+// pinned place sections start expanded (per place, a per-browser preference kept in localStorage); only the recommendations are pinned by default
+const PINS_KEY='ilios.sections';
+const readPins=()=>{try{return JSON.parse(localStorage.getItem(PINS_KEY)||'{}')}catch{return{}}};
+export const sectionPinned=(id,k)=>readPins()[id]?.[k]??k==='rec';
+export const setSectionPinned=(id,k,v)=>{try{const p=readPins();localStorage.setItem(PINS_KEY,JSON.stringify({...p,[id]:{...p[id],[k]:v}}))}catch{}};

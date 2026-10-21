@@ -81,3 +81,5 @@ table{display:block;overflow-x:auto}
 
 .cols{display:flex;gap:0 32px;align-items:flex-start;border-top:1px solid var(--bd);padding-top:10px;margin:10px 0 2px}.cols[hidden]{display:none}.panel .cols>.fields{flex:0 1 540px;min-width:0;border-top:0;padding-top:0;margin:0 0 10px}.cols>.panel{flex:0 0 400px;margin:0 0 10px;box-sizing:border-box}
 @container (max-width:820px){.cols{flex-direction:column;align-items:stretch}.cols>.panel{flex:none}}
+
+.sec .pin{margin-left:auto;background:none;border:0;padding:2px 4px;color:var(--mut);cursor:pointer;line-height:0}.sec:not([open])>summary .pin{display:none}.sec .pin.on{color:var(--fg)}.sec .pin.on svg{fill:currentColor}

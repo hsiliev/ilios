@@ -1,4 +1,4 @@
-import {$,h,say,api,f1,dmy,svg,ICONS} from './util.js';
+import {$,h,say,api,f1,dmy,svg,ICONS,sectionPinned,setSectionPinned} from './util.js';
 import {weatherChart,intraChart,powerChart,batteryChart} from './charts.js';
 
 // collapsible place: a summary row with today's key figures, the charts and advice inside
@@ -42,28 +42,45 @@ function placeSummary(r){
       day&&chip('Днес: макс. '+f1(day.tMax)+'°C, мин. '+f1(day.tMin)+'°C',h('b',{},f1(day.tMax,0)+'°'),h('span',{cls:'mut'},' / '+f1(day.tMin,0)+'°')),
       day&&chip('Валеж днес: '+f1(day.rainMm)+' мм',svg(ICONS.rain,'rain sm'),f1(day.rainMm)+' мм'),
       ...crops.map(([k,l])=>chip(l+': '+w[k].text,svg(ICONS[k],'crop sm'),svg(ICONS[w[k].water],'water sm '+w[k].water))),
-      b&&b.soc!=null&&chip(batteryText(b),batIcon(b.soc,'sm'),f1(b.soc,0)+'%',b.powerW>50&&svg(ICONS.zap,'ev zap sm')),
+      b&&b.soc!=null&&chip(batteryText(b),batIcon(b.soc,'sm'),f1(b.soc,0)+'%',b.powerW>50?svg(ICONS.zap,'ev zap sm'):null),
       b&&tom&&(()=>{if(!(b.batteryKwh>0))return chip('Утре: очаквано производство '+f1(tom.kwh)+' kWh',f1(tom.kwh)+' kWh');
         const full=tom.kwh>=b.batteryKwh;
         return chip('Утре: '+f1(tom.kwh)+' kWh – батерията '+(full?'може':'не може')+' да се зареди напълно от слънцето',svg(ICONS[full?'yes_':'no_'],'sm ev '+(full?'okc':'nox')),f1(tom.kwh)+' kWh')})()));
 }
 
-const sec=(t,...c)=>secOpen(false,t,...c);
-const secOpen=(open,t,...c)=>h('details',{cls:'sec',open},h('summary',{},svg(ICONS.chev,'chev sm'),h('h3',{},t)),...c);
-
-function recommendations(r){
-  const w=r.watering,n=r.night,crops=[['plants','Растения'],['grass','Трева'],['trees','Дървета']];
-  return secOpen(true,'Препоръки',
-    h('div',{cls:'recgrid'},
-    ...crops.map(([k,l])=>h('div',{cls:'rec'},svg(ICONS[k],'crop sm'),h('b',{},l),h('span',{cls:'rt'},svg(ICONS[w[k].water],'water sm '+w[k].water),w[k].text))),
-    ...(n?[h('div',{cls:'rec'},batIcon(n.charge?20:100,'sm'),h('b',{},'Батерия през нощта'),h('span',{cls:'rt'},n.text))]:[]),
-    ...r.days.filter(d=>d.plan).map(d=>h('div',{cls:'rec'},batIcon(d.plan.totalKwh>0?20:100,'sm'),h('b',{},'Нощно зареждане за '+dmy(d.date)),
-      h('span',{cls:'rt'},d.plan.totalKwh>0
-        ?`Заредете батерията до ${f1(d.plan.targetSoc,0)}% с евтин нощен ток, преди да започне дневната зона (${d.plan.stopBy} ч.): ${f1(d.plan.dayStartKwh)} kWh за началото на деня`+(d.plan.sunAt?` (до ${d.plan.sunAt} ч.)`:'')+` + ${f1(d.plan.solarKwh)} kWh компенсация на слънцето = ${f1(d.plan.totalKwh)} kWh.`
-        :'Не е нужно нощно зареждане – слънцето покрива консумацията.'))),
-    ...(r.missed?[h('div',{cls:'rec'},batIcon(r.missed.lostEur>0?20:100,'sm'),h('b',{},'Пропусната икономия днес'),h('span',{cls:'rt'},r.missed.text))]:[])));
+ICONS.pin='<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>';
+// a section; the pin (shown while it is expanded) makes it start expanded the next time
+function sec(id,key,t,...c){
+  let pinned=sectionPinned(id,key);
+  const pin=h('button',{type:'button',cls:'pin'+(pinned?' on':''),title:'Закачи – да е разгънат при следващо зареждане','aria-label':'Закачи раздела '+t,'aria-pressed':String(pinned),
+    onclick:e=>{e.preventDefault();e.stopPropagation();pinned=!pinned;setSectionPinned(id,key,pinned);pin.classList.toggle('on',pinned);pin.setAttribute('aria-pressed',String(pinned))}},svg(ICONS.pin,'sm'));
+  return h('details',{cls:'sec',open:pinned},h('summary',{},svg(ICONS.chev,'chev sm'),h('h3',{},t),pin),...c);
 }
 
+function recommendations(r){
+  const w=r.watering,night=nightLine(r),crops=[['plants','Растения'],['grass','Трева'],['trees','Дървета']];
+  return sec(r.id,'rec','Препоръки',
+    h('div',{cls:'recgrid'},
+    ...crops.map(([k,l])=>h('div',{cls:'rec'},svg(ICONS[k],'crop sm'),h('b',{},l),h('span',{cls:'rt'},svg(ICONS[w[k].water],'water sm '+w[k].water),w[k].text))),
+    ...(night?[h('div',{cls:'rec'},batIcon(night.charge?20:100,'sm'),h('b',{},'Батерия'),h('span',{cls:'rt',title:night.title},night.text))]:[])));
+}
+
+// one line: tonight's charge (the coming plan, else the daily estimate), what it costs and saves against the day price, and yesterday's missed saving
+function nightLine(r){
+  const n=r.night,plan=r.days.filter(d=>d.plan&&d.date>=r.today).map(d=>d.plan)[0],m=r.missed;
+  const eur=v=>v.toLocaleString('bg-BG',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+  const kwh=plan?plan.totalKwh:n&&n.charge?n.kwh:0;
+  if(!plan&&!n)return null;
+  let text='Тази нощ не е нужно зареждане – слънцето покрива консумацията',charge=false;
+  if(kwh>0){
+    charge=true;
+    text='Тази нощ заредете ≈ '+f1(kwh)+' kWh'+(plan?` (до ${f1(plan.targetSoc,0)}%, преди ${plan.stopBy} ч.)`:'');
+    if(n)text+=' за ≈ '+eur(kwh*n.nightPrice)+' – ще спестите ≈ '+eur(kwh*(n.dayPrice-n.nightPrice))+' спрямо дневна цена';
+  }
+  if(m)text+=' · '+(m.lostEur>0?'днес пропуснахте ≈ '+eur(m.lostEur):'днес няма спестявания');
+  const t=[n&&n.text,plan&&plan.totalKwh>0?`${f1(plan.dayStartKwh)} kWh за началото на деня`+(plan.sunAt?` (до ${plan.sunAt} ч.)`:'')+` + ${f1(plan.solarKwh)} kWh компенсация на слънцето`:'',m&&m.text].filter(Boolean).join('\n');
+  return {text,charge,title:t};
+}
 function reportCard(r,i,state){
   if(r.error)return h('div',{cls:'card'},h('h2',{},r.name,r.country?[' ',h('span',{cls:'mut'},r.country)]:''),h('div',{cls:'yes'},r.error));
   const b=r.battery,html=s=>{const d=h('div');d.innerHTML=s;return [d]};
@@ -71,11 +88,11 @@ function reportCard(r,i,state){
   return h('details',{cls:'card place',open:state[r.id]??i===0,      ontoggle:e=>{if(e.target!==e.currentTarget)return;const st=readOpen();st[r.id]=e.target.open;localStorage.setItem(OPEN_KEY,JSON.stringify(st))}},
     placeSummary(r),
     h('div',{cls:'pbody'},
-    sec('Седмични температури и валежи',...html(weatherChart(r.days,r.today))),
-    sec('Времето днес',...(r.intraday?html(intraChart(r.intraday)):[h('p',{cls:'mut'},'Данните за деня се зареждат…')])),
+    sec(r.id,'week','Седмични температури и валежи',...html(weatherChart(r.days,r.today))),
+    sec(r.id,'today','Времето днес',...(r.intraday?html(intraChart(r.intraday)):[h('p',{cls:'mut'},'Данните за деня се зареждат…')])),
     ...(r.solar?[
-      sec('Седмично слънце',...(b?html(powerChart(r.days,r.today,b.batteryKwh,r.estimate)):[noSolar])),
-      ...(b?[sec('Батерия днес',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.dischargeProfile||[],b,r.estimate,[r.nightFrom,r.nightTo])):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
+      sec(r.id,'sun','Седмично слънце',...(b?html(powerChart(r.days,r.today,b.batteryKwh,r.estimate)):[noSolar])),
+      ...(b?[sec(r.id,'battery','Батерия днес',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.dischargeProfile||[],b,r.estimate,[r.nightFrom,r.nightTo])):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
     recommendations(r)));
 }
 
