@@ -101,5 +101,5 @@ fun compensation(pattern: DoubleArray, pvW: (Int) -> Double, dayStart: Int, nigh
 class NightPlan(
     val day: String, val foundAt: Long, val checkedAt: Long, val dayStartKwh: Double, val solarKwh: Double, val totalKwh: Double,
     val targetSoc: Double, val sunAt: String?, val stopBy: String, val socNow: Double?, val reached: Boolean,
-    val ruleId: String? = null, val ruleSoc: Double? = null, val control: String? = null,
+    val chargeUntil: Long? = null, val control: String? = null,
 )

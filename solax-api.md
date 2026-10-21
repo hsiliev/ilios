@@ -16,7 +16,7 @@ Quick facts (details in the copy below): all paths start with `/openapi/…`; th
 - **Battery charge:** hourly (every 30 minutes while the night zone lasts); `page_device_info` (`deviceType=1`) lists the inverters (serials cached in `inverter_sns`), then `realtime_data` (`snList` = inverter serials, `deviceType=2`, `requestSnType=1`) returns one entry per battery; the app averages `batterySOC`, sums `batteryRemainings` and `chargeDischargePower`.
 - **Battery history of past days:** two requests per day (12-hour limit), one day per 10-minute loop pass; the day's highest charge counts, 99 % or more as "reached 100 %".
 - **Capacity has up to three figures that can disagree:** the plant record's `batteryCapacity` (owner's: 5.8 kWh for a battery sold as 15 kWh), the battery devices' `ratedCapacity` (Wh for residential; the owner's device list returned none) and a usable capacity computed from `batteryRemainings` ÷ charge (owner's reading: 10 % and 1.2 kWh ⇒ about 12 kWh). The app keeps the raw answer when nothing usable comes back (`solax.diag_devices`, `solax.diag_history`).
-- **Inverter control (night charging):** with a place's *Разреши управлене* on, the night planner creates TOU rules (TOU endpoints in part B) with `SolaxService.programCharge` / `removeChargeRules`; see A2 and `AGENTS.md`.
+- **Inverter control (night charging):** with a place's *Разреши управлене* on, the night planner charges the battery in remote mode: `SolaxService.startCharge` (Push Power, negative `batteryPower`, `timeOfDuration`, `nextMotion` 160) and `stopCharge` (`exit_vpp_mode`); see A2 and `AGENTS.md`. The TOU endpoints in part B are not used (they did not work on the owner's inverter).
 - **Retrying failures:** every failed call counts against the allowance, so the app waits by cause: **12 hours** for wrong credentials, a refused token or no access (`10401`, `10402` twice, `10403`, `10500`, `10505`, `10506`; changing the credentials ends the wait), **6 hours** when the allowance is used up (`10405`), **1 hour** for rate limits (`10406`), other codes and network errors. The same waits apply to the daily battery read and battery history. Changing credentials for the same plant keeps everything stored; a different account's plant list wipes the old plant's data.
 - The Client Secret is stored as given (needed for the API) and must never be returned by the app's own API, logged, or put into a status text.
 
@@ -35,9 +35,18 @@ Quick facts (details in the copy below): all paths start with `/openapi/…`; th
 - **Remote-control (VPP) modes, tried 2026-10-21 (daytime):** both were accepted (`status` 3) and became active after about 5 minutes (`deviceStatus` 130; the cloud values update only about every 5 minutes). **`pv_and_bat/individual_setting_target_soc_mode`** (`batteryPower` 1000, `pvPowerLimit` 9000, `targetSoc` 22, 900 s) left the battery **idle at 0 W with about 660 W imported from the grid** - not what was wanted; the meaning of its `batteryPower` is unclear, do not use it. **`push_power/positive_or_negative_mode`** (`batteryPower` **-1000** = charge, 900 s, `nextMotion` 160) held the battery at **about 960 W charging** while the panels could have given 2.4-2.6 kW, grid about 0 - so the power setting is respected. `exit_vpp_mode` answers `status` 3 and the inverter returns to `deviceStatus` 102. Not yet tried at night (real grid charging) and without a target SOC the caller must stop it (exit) when the charge reaches the target.
 - The inverter's work mode in the SolaX app was **Self Use** (confirmed by the owner); `deviceStatus` 102 means only "Normal" and does not name the work mode. Adding a TOU rule through the API did not switch the inverter into TOU, so the rule never ran.
 
+### Night tests of the remote mode, 2026-10-21 (verified; the code uses them)
+
+- **Push Power charges from the grid at the set power.** `batteryPower` -2000, 900 s: status 130 about 5 minutes later, battery +1.97 kW, grid import 4.75 kW with a house load of 2.75 kW (the SolaX app showed the same). Later the load fell and the import with it (2.6 kW), the battery stayed at 1.97 kW: the cap is the battery's share only. -500 W gave +457 W (import 1.04 kW), -1500 W gave +1457 W. SOC rose from 81 % to 83 % in about 14 minutes at 2 kW.
+- **The timer ends the mode by itself:** `timeOfDuration` 300 with `nextMotion` 160 and no exit sent: the app showed the charge stopped and the API read status 102 about 9 minutes after the start.
+- **A second command replaces the first**, power and timer: -500 W/900 s, then -1500 W/300 s sent two minutes later: the app showed 1.48 kW within 5 minutes and the mode ended at the second timer (before the first timer would have).
+- **`exit_vpp_mode` stops the charge at once;** with nothing active it returns `10000` and `status` 3 as well. The inverter then goes back to Self Use (battery supplies the house, grid 0).
+- **Early exit at a target SOC works:** the script sent the exit when the (up to 5 minutes old) reading reached the target.
+- Readings come from `realtime_data`: `gridPower` is negative while importing, `chargeDischargePower` positive while charging, `deviceStatus` 130 during remote control and 102 otherwise. Calls can fail at times without a `result` (the reading code must tolerate it).
+
 ### Open points [unverified]
 
-- How to make the inverter **act** on a TOU rule (see above). Next steps to try: read `deviceStatus` (131–135 / 150) during a window to see the real mode; check the SolaX app for the work mode; try the **PV & battery individual setting** remote modes ("Inverter Remote Control Mode"), which charge from PV and grid at a set battery power for a set duration without changing the stored work-mode configuration, or the self-use window call ("Inverter Work Mode Control" → Self Use Mode, no power cap).
+- (Solved by the remote mode above.) How to make the inverter **act** on a TOU rule (see above). Next steps to try: read `deviceStatus` (131–135 / 150) during a window to see the real mode; check the SolaX app for the work mode; try the **PV & battery individual setting** remote modes ("Inverter Remote Control Mode"), which charge from PV and grid at a set battery power for a set duration without changing the stored work-mode configuration, or the self-use window call ("Inverter Work Mode Control" → Self Use Mode, no power cap).
 - That `chargePower` caps charging power (the documentation says it caps PV plus grid charging) and that charging stops at `targetSoc`.
 - Which mode the inverter returns to outside the rule's date or after the window.
 - What happens when a rule is added for a date that already has one (the app deletes its own earlier rules first).
@@ -3386,6 +3395,8 @@ This mode directly controls the battery charging/discharging power, the PV power
  | Device SN  | String  | Device SN
  | status  | Interger  | Device command delivery result, for detailed information on the specific values, please refer to "Appendix 8: Description and definition of the status field of the device command delivery result"
 ```
+
+> **Project note.** **Verified 2026-10-21 (night) and used** by `SolaxService.startCharge`: a negative `batteryPower` charges from the grid at that power (house load comes on top from the grid), the timer ends the mode by itself with `nextMotion` 160, a new command replaces a running one, and `exit_vpp_mode` ends it at once. See A2.
 
 ### Push Power - Zero Mode
 

@@ -23,6 +23,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -67,8 +68,6 @@ import kotlin.time.Duration.Companion.minutes
 private const val RETRY_AFTER_MS = 60L * 60 * 1000 // ordinary failures: try again in an hour
 private const val QUOTA_RETRY_MS = 6L * 60 * 60 * 1000 // the call allowance is used up: it will not recover within the hour
 private const val AUTH_RETRY_MS = 12L * 60 * 60 * 1000 // wrong credentials or no access: retrying only burns calls until the user fixes them
-/** The battery charge is read once a day at this local time in Sofia (not in the place's time zone). */
-private val BATTERY_ZONE = ZoneId.of("Europe/Sofia")
 /** A day's production is final only after the cloud has processed the night, so yesterday is fetched from this local time. */
 private val PRODUCTION_FINAL_FROM = LocalTime.of(2, 0)
 private const val PLANT_REFRESH_MS = 7L * 24 * 60 * 60 * 1000 // panel power and battery capacity rarely change
@@ -480,36 +479,19 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
     }
 
     /**
-     * Programs the inverter to charge the battery from the grid between [start] and [end] (local time of the place) up to [targetSoc] %
-     * with at most the place's max charging power. SolaX time-of-use rules are full-day schedules for one date range and cannot cross
-     * midnight, so there is one rule per date: self use, the charge segment, self use. Returns the rules made, as `serial/ruleId` texts.
-     * Throws [SolaxError] on failure (rules already made are then removed again).
+     * Charges the battery from the grid at the place's max charging power for [seconds]: SolaX "Push Power" remote mode (a negative battery
+     * power charges; the panels' surplus and the house use are handled by the inverter as usual). When the time is up the inverter leaves
+     * remote control by itself, so the timer is the safety stop. A new command replaces a running one (power and timer). Throws [SolaxError].
      */
-    suspend fun programCharge(loc: Loc, start: ZonedDateTime, end: ZonedDateTime, targetSoc: Int): List<String> = lock.withLock {
+    suspend fun startCharge(loc: Loc, seconds: Int) = remote(loc) { session, sns, type -> session.pushPower(sns, type, loc.maxChargeW, seconds) }
+
+    /** Ends a charge started by [startCharge] at once (harmless when none is running). Throws [SolaxError]. */
+    suspend fun stopCharge(loc: Loc) = remote(loc) { session, sns, type -> session.exitRemote(sns, type) }
+
+    private suspend fun remote(loc: Loc, command: suspend (Session, List<String>, Int) -> Unit) = lock.withLock {
         val (row, plantId, type) = connection(loc)
         val session = Session(loc.id, row)
-        val sns = inverterSerials(loc.id, row, session, plantId, type)
-        val made = ArrayList<String>()
-        try {
-            var day = start.toLocalDate()
-            while (!day.isAfter(end.toLocalDate())) {
-                val from = if (day == start.toLocalDate()) start.toLocalTime() else LocalTime.MIN
-                val to = if (day == end.toLocalDate()) end.toLocalTime() else LocalTime.of(23, 59)
-                if (from < to) made += session.addChargeRule(sns, type, day, from, to, loc.reservedPct, targetSoc, loc.maxChargeW)
-                day = day.plusDays(1)
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            runCatching { session.deleteChargeRules(type, made) }
-            throw e
-        }
-        made
-    }
-
-    /** Removes rules made by [programCharge] (`serial/ruleId` texts). Throws [SolaxError] on failure. */
-    suspend fun removeChargeRules(loc: Loc, rules: List<String>) = lock.withLock {
-        val (row, _, type) = connection(loc)
-        Session(loc.id, row).deleteChargeRules(type, rules)
+        command(session, inverterSerials(loc.id, row, session, plantId, type), type)
     }
 
     private fun connection(loc: Loc): Triple<ResultRow, String, Int> {
@@ -550,8 +532,8 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         transaction { Solax.update({ Solax.locationId eq loc.id }) { it[Solax.batteryTryAt] = now.toEpochMilli() + RETRY_AFTER_MS } }
         try {
             val soc = readBattery(loc.id, row, Session(loc.id, row), plantId, type, now.toEpochMilli())
-            val at = now.atZone(BATTERY_ZONE).format(stamp)
-            setBatteryStatus(loc.id, if (soc == null) "Solax не върна данни за батерията" else "Заряд на батерията: ${"%.0f".format(java.util.Locale.forLanguageTag("bg"), soc)}% към $at (София)")
+            val at = now.atZone(ZoneId.of(loc.tz)).format(stamp) // the place's own time
+            setBatteryStatus(loc.id, if (soc == null) "Solax не върна данни за батерията" else "Заряд на батерията: ${"%.0f".format(java.util.Locale.forLanguageTag("bg"), soc)}% към $at")
             cacheToday(loc, now)
         } catch (e: CancellationException) {
             throw e
@@ -938,57 +920,23 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             return total.takeIf { it > 0 } to firstRaw
         }
 
-        /**
-         * Adds the time-of-use rule of one [day] (a full-day schedule: SolaX needs it to start at 00:00; the last segment ends at 23:59):
-         * self use up to the charge segment [from]-[to] (runMode 4, grid charging allowed, capped at [powerW]), self use after it.
-         * Returns `serial/ruleId` per inverter. Only the acceptance is known at once; SolaX carries the command out asynchronously.
-         */
-        suspend fun addChargeRule(sns: List<String>, type: Int, day: LocalDate, from: LocalTime, to: LocalTime, minSoc: Int, targetSoc: Int, powerW: Int): List<String> {
+        /** Remote-control command [path] (under `inverter_vpp_mode/`) for [sns]. Only the acceptance is known at once; the inverter acts about 5 minutes later in the cloud's data. */
+        private suspend fun remoteCommand(path: String, sns: List<String>, type: Int, extra: JsonObjectBuilder.() -> Unit = {}) {
             if (sns.isEmpty()) throw SolaxError("В Solax не е намерен инвертор")
-            val hm = DateTimeFormatter.ofPattern("HH:mm"); val md = DateTimeFormatter.ofPattern("MM-dd")
-            fun selfUse(a: LocalTime, b: LocalTime) = buildJsonObject { put("runMode", 1); put("startTime", a.format(hm)); put("endTime", b.format(hm)); put("minSoc", minSoc) }
-            val last = LocalTime.of(23, 59)
-            val segments = buildList {
-                if (from > LocalTime.MIN) add(selfUse(LocalTime.MIN, from))
-                add(buildJsonObject {
-                    put("runMode", 4); put("startTime", from.format(hm)); put("endTime", to.format(hm))
-                    put("chargePower", powerW); put("targetSoc", targetSoc); put("chargeGridEnableFlag", 1)
-                })
-                if (to < last) add(selfUse(to, last))
+            authed { t ->
+                val r = http.post("$baseUrl/openapi/v2/device/inverter_vpp_mode/$path") {
+                    header("Authorization", "bearer $t"); contentType(ContentType.Application.Json)
+                    setBody(buildJsonObject { put("snList", JsonArray(sns.map { JsonPrimitive(it) })); put("businessType", type); extra() }.toString())
+                }.body<ControlResp>()
+                check(r.code, r.message)
             }
-            val body = buildJsonObject {
-                put("snList", JsonArray(sns.map { JsonPrimitive(it) })); put("businessType", type)
-                put("startDate", day.format(md)); put("endDate", day.format(md)); put("minSoc", minSoc)
-                put("runModeInfoList", JsonArray(segments))
-            }
-            val text = authed { t ->
-                val text = http.post("$baseUrl/openapi/v2/device/config/tou/add_tou_set") {
-                    header("Authorization", "bearer $t"); contentType(ContentType.Application.Json); setBody(body.toString())
-                }.bodyAsText()
-                val r = plantsJson.decodeFromString<ControlResp>(text)
-                check(r.code, r.message); text
-            }
-            val devices = (plantsJson.parseToJsonElement(text).jsonObject["result"] as? JsonObject)?.get("optDeviceList") as? JsonArray
-            val made = devices.orEmpty().mapNotNull { it as? JsonObject }.mapNotNull { d ->
-                val sn = (d["deviceSn"] as? JsonPrimitive)?.contentOrNull; val id = (d["ruleId"] as? JsonPrimitive)?.contentOrNull
-                if (sn != null && id != null && id != "null") "$sn/$id" else null
-            }
-            if (made.isEmpty()) throw SolaxError("Solax не потвърди правилото за зареждане")
-            return made
         }
 
-        suspend fun deleteChargeRules(type: Int, rules: List<String>) {
-            for (rule in rules) {
-                val sn = rule.substringBefore('/'); val id = rule.substringAfter('/')
-                authed { t ->
-                    val r = http.post("$baseUrl/openapi/v2/device/config/tou/delete_tou_set") {
-                        header("Authorization", "bearer $t"); contentType(ContentType.Application.Json)
-                        setBody(buildJsonObject { put("deviceSn", sn); put("businessType", type); put("ruleId", id) }.toString())
-                    }.body<ControlResp>()
-                    check(r.code, r.message)
-                }
-            }
-        }
+        /** Push Power: a negative `batteryPower` charges the battery by [powerW]; after [seconds] remote control ends (`nextMotion` 160). */
+        suspend fun pushPower(sns: List<String>, type: Int, powerW: Int, seconds: Int) =
+            remoteCommand("push_power/positive_or_negative_mode", sns, type) { put("batteryPower", -powerW); put("timeOfDuration", seconds); put("nextMotion", 160) }
+
+        suspend fun exitRemote(sns: List<String>, type: Int) = remoteCommand("exit_vpp_mode", sns, type)
 
         suspend fun statistics(plantId: String, knownType: Int?, month: String): Pair<Int, List<StatRow>> {
             for (type in if (knownType != null) listOf(knownType) else listOf(1, 4)) {

@@ -139,9 +139,8 @@ object NightPlans : Table("night_plans") {
     val stopBy = varchar("stop_by", 5) // HH:mm: charging must be over when the day zone starts
     val socNow = double("soc_now").nullable()
     val reached = bool("reached")
-    val ruleId = varchar("rule_id", 400).nullable() // the SolaX time-of-use rules (`serial/ruleId`, comma-separated, one per date) that charge the battery for this plan
-    val ruleSoc = double("rule_soc").nullable() // the target charge (%) programmed into that rule
-    val control = varchar("control", 200).nullable() // outcome of the last attempt to programme the inverter
+    val chargeUntil = long("charge_until").nullable() // epoch ms until which the inverter was told to charge from the grid (SolaX remote mode with a timer); null when no charge is running
+    val control = varchar("control", 200).nullable() // outcome of the last attempt to control the inverter
     override val primaryKey = PrimaryKey(locationId, day)
 }
 

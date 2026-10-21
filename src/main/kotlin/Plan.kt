@@ -15,6 +15,9 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.time.Duration.Companion.minutes
 
+/** Extra charging time (a share) for the losses of charging, so the battery really reaches the planned level. */
+private const val CHARGE_MARGIN = 1.1
+
 /** Plans older than this many days are dropped. */
 private const val KEEP_PLAN_DAYS = 14L
 
@@ -23,7 +26,7 @@ fun nightPlans(locationId: Long): Map<LocalDate, NightPlan> = transaction {
         LocalDate.parse(it[NightPlans.day]) to NightPlan(
             it[NightPlans.day], it[NightPlans.foundAt], it[NightPlans.checkedAt], it[NightPlans.dayStartKwh], it[NightPlans.solarKwh], it[NightPlans.totalKwh],
             it[NightPlans.targetSoc], it[NightPlans.sunAt], it[NightPlans.stopBy], it[NightPlans.socNow], it[NightPlans.reached],
-            it[NightPlans.ruleId], it[NightPlans.ruleSoc], it[NightPlans.control],
+            it[NightPlans.chargeUntil], it[NightPlans.control],
         )
     }
 }
@@ -31,7 +34,7 @@ fun nightPlans(locationId: Long): Map<LocalDate, NightPlan> = transaction {
 /**
  * During the night zone the battery is read every 30 minutes (see [SolaxService.readBatteryIfDue]). When it is found at its reserved minimum, the
  * compensation energy for the coming day zone is worked out ([compensation]) and kept in `night_plans`; the plan is refreshed at each later check
- * until the day zone starts. With management enabled the inverter is also programmed to charge (see [programInverter]); the plan is shown (callouts, recommendations, the lightning on the weekly chart).
+ * until the day zone starts. With management enabled the inverter is also told to charge (see [controlInverter]); the plan is shown (callouts, recommendations, the lightning on the weekly chart).
  */
 class NightPlanner(private val weather: WeatherService, private val solax: SolaxService) {
     suspend fun loop() {
@@ -56,33 +59,45 @@ class NightPlanner(private val weather: WeatherService, private val solax: Solax
     }
 
     /**
-     * With management enabled and charging still needed, programs the inverter to charge from now until the day zone starts, up to the planned
-     * level and at the place's max charging power; an earlier rule for another level is replaced. Never throws (except cancellation); returns
-     * the rule id, the level programmed and a status text.
+     * Remote-mode charging (SolaX Push Power at the place's max charging power) for the night plan; never throws (except cancellation).
+     * Charging runs on a timer that the inverter honours by itself: the energy still missing divided by the power, plus a margin, and never
+     * past the day zone start ([stopHour]). Each fresh battery reading sends the command again with the time recomputed (a new command
+     * replaces a running one), and as soon as the plan is reached, or management is switched off, a running charge is ended. Returns the
+     * time until which the inverter charges (null when it does not) and a status text.
      */
-    private suspend fun programInverter(loc: Loc, existing: NightPlan?, targetSoc: Double, reached: Boolean, local: ZonedDateTime, target: LocalDate, stopHour: Int): Triple<String?, Double?, String?> {
-        var ruleId = existing?.ruleId; var ruleSoc = existing?.ruleSoc
-        val keep = Triple(ruleId, ruleSoc, existing?.control)
-        if (!loc.allowControl) return keep
+    internal suspend fun controlInverter(loc: Loc, existing: NightPlan?, plant: SolaxPlant, targetSoc: Double, reached: Boolean, local: ZonedDateTime, target: LocalDate, stopHour: Int): Pair<Long?, String?> {
+        val now = local.toInstant().toEpochMilli()
+        val running = existing?.chargeUntil?.takeIf { it > now }
+        val keep = running to existing?.control
         val level = minOf(100, Math.ceil(targetSoc).toInt())
-        if (reached || level <= loc.reservedPct) return keep // nothing to charge: a rule made earlier ends by itself
-        if (ruleId != null && ruleSoc != null && Math.abs(ruleSoc - level) < 2) return keep
-        val end = target.atTime(stopHour, 0).atZone(local.zone)
-        val start = local.truncatedTo(java.time.temporal.ChronoUnit.MINUTES).plusMinutes(1)
-        if (!start.isBefore(end)) return keep
+        val stopReason = when {
+            !loc.allowControl -> "Управлението е изключено – зареждането е прекратено"
+            reached -> "Планираното ниво е достигнато"
+            level <= loc.reservedPct -> "Няма нужда от зареждане"
+            else -> null
+        }
+        if (stopReason != null) {
+            if (running == null) return keep
+            return try { solax.stopCharge(loc); null to stopReason } catch (e: CancellationException) { throw e } catch (e: Exception) { failed(loc, e, running, existing?.control) }
+        }
+        val end = target.atTime(stopHour, 0).atZone(local.zone).toInstant().toEpochMilli()
+        val missingKwh = (targetSoc - (plant.soc ?: return keep)) / 100 * (plant.batteryKwh ?: return keep)
+        val seconds = minOf((end - now) / 1000, (missingKwh / (loc.maxChargeW / 1000.0) * 3600 * CHARGE_MARGIN).toLong() + 60)
+        if (seconds < 120) return keep // nothing worthwhile left before the day zone
         return try {
-            if (ruleId != null) { runCatching { solax.removeChargeRules(loc, ruleId.split(',')) }; ruleId = null; ruleSoc = null } // an expired rule may already be gone
-            val id = solax.programCharge(loc, start, end, level).joinToString(",")
-            Triple(id, level.toDouble(), "Зареждане до $level% при най-много ${loc.maxChargeW} W е зададено в ${"%02d:%02d".format(start.hour, start.minute)}")
+            solax.startCharge(loc, seconds.toInt())
+            val at = local.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+            (now + seconds * 1000) to "Зареждане до $level% при най-много ${loc.maxChargeW} W, зададено в $at за ${(seconds + 30) / 60} мин"
         } catch (e: CancellationException) {
             throw e
-        } catch (e: SolaxError) {
-            Triple(ruleId, ruleSoc, e.message?.take(200))
         } catch (e: Exception) {
-            System.err.println("Programming the inverter failed for place ${loc.id}: ${e::class.simpleName}")
-            Triple(ruleId, ruleSoc, "Инверторът не може да се програмира – ще опитам отново по-късно")
+            failed(loc, e, running, existing?.control)
         }
     }
+
+    private fun failed(loc: Loc, e: Exception, until: Long?, control: String?): Pair<Long?, String?> =
+        if (e is SolaxError) until to e.message?.take(200)
+        else { System.err.println("Controlling the inverter failed for place ${loc.id}: ${e::class.simpleName}"); until to "Инверторът не може да се управлява – ще опитам отново по-късно" }
 
     suspend fun check(loc: Loc, now: Instant = Instant.now()) {
         val plant = solax.plant(loc.id) ?: return
@@ -111,14 +126,14 @@ class NightPlanner(private val weather: WeatherService, private val solax: Solax
         val c = compensation(pattern, { pv[it] }, tTo * 12, tFrom * 12, cap, loc.reservedPct)
         val at = now.toEpochMilli()
         val reached = c.totalKwh <= 0 || soc >= c.targetSoc
-        val (ruleId, ruleSoc, control) = programInverter(loc, existing, c.targetSoc, reached, local, target, tTo)
+        val (chargeUntil, control) = controlInverter(loc, existing, plant, c.targetSoc, reached, local, target, tTo)
         transaction {
             NightPlans.deleteWhere { (NightPlans.locationId eq loc.id) and (NightPlans.day eq target.toString()) }
             NightPlans.insert {
                 it[locationId] = loc.id; it[day] = target.toString(); it[foundAt] = existing?.foundAt ?: at; it[checkedAt] = at
                 it[dayStartKwh] = c.dayStartKwh; it[solarKwh] = c.solarKwh; it[totalKwh] = c.totalKwh; it[targetSoc] = c.targetSoc
                 it[sunAt] = c.sunAt; it[stopBy] = "%02d:00".format(tTo); it[socNow] = soc; it[NightPlans.reached] = reached
-                it[NightPlans.ruleId] = ruleId; it[NightPlans.ruleSoc] = ruleSoc; it[NightPlans.control] = control
+                it[NightPlans.chargeUntil] = chargeUntil; it[NightPlans.control] = control
             }
             NightPlans.deleteWhere { (NightPlans.locationId eq loc.id) and (NightPlans.day less today.minusDays(KEEP_PLAN_DAYS).toString()) }
         }
