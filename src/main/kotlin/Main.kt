@@ -261,6 +261,7 @@ fun Application.module() {
 
             get("/report") {
                 val uid = call.userId()
+                solax.viewed()
                 val locs = transaction { Locations.selectAll().where { Locations.userId eq uid }.orderBy(Locations.position to SortOrder.ASC, Locations.id to SortOrder.ASC).map(::locOf) }
                 val reports = locs.map { loc ->
                     val days = weather.days(loc)

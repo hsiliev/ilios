@@ -66,6 +66,8 @@ import kotlin.time.Duration.Companion.minutes
 // Produced energy of a past day never changes, so each day is fetched once (on connecting, then the new day every morning);
 // the battery charge is read hourly and cached in the database. Everything is served from the database.
 private const val RETRY_AFTER_MS = 60L * 60 * 1000 // ordinary failures: try again in an hour
+private const val VIEWED_WITHIN_MS = 3L * 60 * 1000 // the dashboard polls every minute while open
+private const val TODAY_EVERY_MS = 9L * 60 * 1000 // today's 5-minute history is refreshed on each 10-minute loop pass
 private const val QUOTA_RETRY_MS = 6L * 60 * 60 * 1000 // the call allowance is used up: it will not recover within the hour
 private const val AUTH_RETRY_MS = 12L * 60 * 60 * 1000 // wrong credentials or no access: retrying only burns calls until the user fixes them
 /** A day's production is final only after the cloud has processed the night, so yesterday is fetched from this local time. */
@@ -354,7 +356,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         while (true) {
             try {
                 val places = transaction { (Locations innerJoin Solax).selectAll().where { Locations.solar eq true }.map(::locOf) }
-                for (loc in places) { syncIfDue(loc); readBatteryIfDue(loc); batteryHistoryIfDue(loc); dischargeHistoryIfDue(loc) }
+                for (loc in places) { syncIfDue(loc); readBatteryIfDue(loc); refreshTodayIfDue(loc); batteryHistoryIfDue(loc); dischargeHistoryIfDue(loc) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -546,12 +548,29 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         }
     }
 
+    @Volatile private var viewedAt = 0L
+
+    /** Called by the report route: the dashboard polls it every minute while open, so a recent call means somebody is looking. */
+    fun viewed(now: Instant = Instant.now()) { viewedAt = now.toEpochMilli() }
+
+    private val todayCachedAt = java.util.concurrent.ConcurrentHashMap<Long, Long>()
+
+    /** Keeps today's chart close to now: refreshes the 5-minute history on every loop pass (10 minutes) while the dashboard is open, unless the battery read just did it; a failure waits an hour. */
+    suspend fun refreshTodayIfDue(loc: Loc, now: Instant = Instant.now()) = lock.withLock {
+        val row = transaction { Solax.selectAll().where { Solax.locationId eq loc.id }.singleOrNull() } ?: return@withLock
+        if (now.toEpochMilli() - viewedAt > VIEWED_WITHIN_MS) return@withLock
+        if (!hasBattery(row)) return@withLock
+        if (now.toEpochMilli() - (todayCachedAt[loc.id] ?: 0) < TODAY_EVERY_MS) return@withLock
+        cacheToday(loc, now)
+    }
+
     /**
      * Caches today's battery charge and panel power at the finest step SolaX's history allows (5 minutes, windows of at most
      * 12 hours, so up to three calls per kind). The battery and inverter histories are merged by time and replace what was
      * stored. Never throws (except cancellation); a failure keeps the previous data.
      */
     private suspend fun cacheToday(loc: Loc, now: Instant) {
+        todayCachedAt[loc.id] = now.toEpochMilli()
         try {
             val row = transaction { Solax.selectAll().where { Solax.locationId eq loc.id }.singleOrNull() } ?: return
             val plantId = row[Solax.plantId] ?: return; val type = row[Solax.businessType] ?: return
@@ -593,6 +612,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            todayCachedAt[loc.id] = now.toEpochMilli() + RETRY_AFTER_MS - TODAY_EVERY_MS // back off like other failures
             System.err.println("SolaX today's history failed for place ${loc.id}: ${(e as? SolaxError)?.message ?: e::class.simpleName}")
         }
     }
