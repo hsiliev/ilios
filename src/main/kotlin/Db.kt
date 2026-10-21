@@ -31,8 +31,11 @@ object Locations : Table("locations") {
     val lat = double("lat")
     val lon = double("lon")
     val tz = varchar("tz", 60).default("UTC")
+    val position = integer("position").default(0) // order of the user's places (ascending; ties by id)
     val solar = bool("solar").default(false) // whether a solar system applies here
     val reservedPct = integer("reserved_pct").default(DEFAULT_RESERVE) // battery charge (%) the inverter keeps back and never discharges below (0-50)
+    val allowControl = bool("allow_control").default(false) // the owner permits managing the inverter through SolaX Cloud
+    val maxChargeW = integer("max_charge_w").default(DEFAULT_MAX_CHARGE_W) // power cap (W) of the grid charging programmed into the inverter
     val supplier = varchar("supplier", 20).default("electrohold") // electricity supplier (key of TARIFFS) for the night-charge advice
     override val primaryKey = PrimaryKey(id)
 }
@@ -136,6 +139,9 @@ object NightPlans : Table("night_plans") {
     val stopBy = varchar("stop_by", 5) // HH:mm: charging must be over when the day zone starts
     val socNow = double("soc_now").nullable()
     val reached = bool("reached")
+    val ruleId = varchar("rule_id", 400).nullable() // the SolaX time-of-use rules (`serial/ruleId`, comma-separated, one per date) that charge the battery for this plan
+    val ruleSoc = double("rule_soc").nullable() // the target charge (%) programmed into that rule
+    val control = varchar("control", 200).nullable() // outcome of the last attempt to programme the inverter
     override val primaryKey = PrimaryKey(locationId, day)
 }
 
@@ -179,6 +185,7 @@ fun initDb(path: String) {
         if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")
         // obsolete: the old per-user settings table and the typed-in performance ratio (now calibrated from SolaX data)
         exec("DROP TABLE IF EXISTS settings")
+        exec("DROP TABLE IF EXISTS tuya") // the abandoned Tuya Cloud connection
         exec("ALTER TABLE locations DROP COLUMN IF EXISTS pv_ratio")
         // battery capacity and PV power now come from SolaX instead of being typed in
         exec("ALTER TABLE locations DROP COLUMN IF EXISTS battery_kwh")

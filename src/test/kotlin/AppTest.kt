@@ -5,6 +5,7 @@ import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -136,5 +137,26 @@ class AppTest {
         assertEquals(false, Mailer("", "app-password").enabled)
         assertEquals(false, Mailer("me@gmail.com", "").enabled)
         assertEquals(false, Mailer("", "").enabled)
+    }
+
+    @Test
+    fun placesCanBeReorderedAndNewOnesGoLast() = app {
+        val c = client()
+        c.register("a@example.com")
+        val uid = userId("a@example.com")
+        val a = place(uid, "A"); val b = place(uid, "B"); val d = place(uid, "D")
+        fun names() = Json.parseToJsonElement(kotlinx.coroutines.runBlocking { c.get("/api/locations").bodyAsText() }).jsonArray.map { it.jsonObject["name"].toString().trim('"') }
+        assertEquals(listOf("A", "B", "D"), names())
+
+        suspend fun order(vararg ids: Long) = c.put("/api/locations/order") { contentType(ContentType.Application.Json); setBody("""{"ids":[${ids.joinToString(",")}]}""") }.status
+        assertEquals(HttpStatusCode.OK, order(d, a, b))
+        assertEquals(listOf("D", "A", "B"), names())
+        assertEquals(HttpStatusCode.BadRequest, order(d, a)) // not every place
+        assertEquals(HttpStatusCode.BadRequest, order(d, a, b, 999)) // someone else's or unknown place
+        assertEquals(listOf("D", "A", "B"), names())
+
+        val other = client().also { it.register("b@example.com") }
+        val foreign = place(userId("b@example.com"), "X")
+        assertEquals(HttpStatusCode.BadRequest, order(d, a, foreign))
     }
 }

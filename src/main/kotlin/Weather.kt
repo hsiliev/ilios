@@ -85,10 +85,12 @@ private class IntraArrays(
 
 class Day(val date: LocalDate, val tMax: Double?, val tMin: Double?, val rainMm: Double, val radiationMj: Double)
 
-class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean, val country: String? = null, val supplier: String = DEFAULT_SUPPLIER, val reservedPct: Int = DEFAULT_RESERVE)
+class Loc(val id: Long, val name: String, val lat: Double, val lon: Double, val tz: String, val solar: Boolean, val country: String? = null, val supplier: String = DEFAULT_SUPPLIER, val reservedPct: Int = DEFAULT_RESERVE,
+          val allowControl: Boolean = false, val maxChargeW: Int = DEFAULT_MAX_CHARGE_W)
 
 fun locOf(r: ResultRow) = Loc(
     r[Locations.id], r[Locations.name], r[Locations.lat], r[Locations.lon], r[Locations.tz], r[Locations.solar], r[Locations.country], r[Locations.supplier], r[Locations.reservedPct],
+    r[Locations.allowControl], r[Locations.maxChargeW],
 )
 
 fun newHttpClient(json: Json) = HttpClient(CIO) {

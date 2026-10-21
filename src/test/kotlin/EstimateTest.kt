@@ -63,4 +63,12 @@ class EstimateTest {
         assertEquals(23 to 7, nightZone(java.time.LocalDate.of(2026, 7, 1), sofia))
         assertEquals(22 to 6, nightZone(java.time.LocalDate.of(2026, 12, 1), sofia))
     }
+
+    @Test
+    fun theEstimatedChargeNeverGoesBelowTheReservedBattery() {
+        val e = estimateDay(slotOf("20:00"), 10.0, 10.0, DoubleArray(288) { 800.0 }, 10) { 0.0 }!!
+        assertTrue(e.points.all { it.soc >= 10.0 })
+        assertEquals(10.0, e.points.last().soc, 1e-9)
+        assertTrue(e.importKwh > 0) // the whole load comes from the grid
+    }
 }

@@ -114,6 +114,7 @@ fun batterySlot(now: Instant, zone: ZoneId): Instant {
     val pvCapacity: Double? = null, // installed PV power, kWp
     val batteryCapacity: Double? = null, // installed battery capacity, kWh
 )
+@Serializable private class ControlResp(val code: Int = -1, val message: String? = null)
 @Serializable private class StatResp(val code: Int = -1, val message: String? = null, val result: StatResult? = null)
 @Serializable private class StatResult(val plantEnergyStatDataList: List<StatRow> = emptyList())
 @Serializable private class StatRow(val date: String, val pvGeneration: Double? = null, val inverterACOutputEnergy: Double? = null, val loadConsumption: Double? = null)
@@ -154,7 +155,7 @@ fun historyStart(today: LocalDate): LocalDate = today.with(TemporalAdjusters.pre
 private fun gridPowerOf(p: JsonObject): Double? = (p["gridPower"] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.let { -it }
 
 /** A failure with a message that is safe to show the user (never contains credentials). */
-private class SolaxError(message: String, val retryMs: Long = RETRY_AFTER_MS) : Exception(message)
+class SolaxError(message: String, val retryMs: Long = RETRY_AFTER_MS) : Exception(message)
 private class TokenRejected : Exception()
 
 /** A plant of the SolaX account, as offered in the settings dropdown. */
@@ -476,6 +477,46 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         val through = if (start <= end) end else row[Solax.producedThrough]?.let(LocalDate::parse) ?: end
         return "централа „${plantName ?: plantId}“" + (if (specs.isEmpty()) "" else " (${specs.joinToString(", ")})") +
             ", произведена енергия до ${"%02d.%02d".format(through.dayOfMonth, through.monthValue)}"
+    }
+
+    /**
+     * Programs the inverter to charge the battery from the grid between [start] and [end] (local time of the place) up to [targetSoc] %
+     * with at most the place's max charging power. SolaX time-of-use rules are full-day schedules for one date range and cannot cross
+     * midnight, so there is one rule per date: self use, the charge segment, self use. Returns the rules made, as `serial/ruleId` texts.
+     * Throws [SolaxError] on failure (rules already made are then removed again).
+     */
+    suspend fun programCharge(loc: Loc, start: ZonedDateTime, end: ZonedDateTime, targetSoc: Int): List<String> = lock.withLock {
+        val (row, plantId, type) = connection(loc)
+        val session = Session(loc.id, row)
+        val sns = inverterSerials(loc.id, row, session, plantId, type)
+        val made = ArrayList<String>()
+        try {
+            var day = start.toLocalDate()
+            while (!day.isAfter(end.toLocalDate())) {
+                val from = if (day == start.toLocalDate()) start.toLocalTime() else LocalTime.MIN
+                val to = if (day == end.toLocalDate()) end.toLocalTime() else LocalTime.of(23, 59)
+                if (from < to) made += session.addChargeRule(sns, type, day, from, to, loc.reservedPct, targetSoc, loc.maxChargeW)
+                day = day.plusDays(1)
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            runCatching { session.deleteChargeRules(type, made) }
+            throw e
+        }
+        made
+    }
+
+    /** Removes rules made by [programCharge] (`serial/ruleId` texts). Throws [SolaxError] on failure. */
+    suspend fun removeChargeRules(loc: Loc, rules: List<String>) = lock.withLock {
+        val (row, _, type) = connection(loc)
+        Session(loc.id, row).deleteChargeRules(type, rules)
+    }
+
+    private fun connection(loc: Loc): Triple<ResultRow, String, Int> {
+        val row = transaction { Solax.selectAll().where { Solax.locationId eq loc.id }.singleOrNull() } ?: throw SolaxError("Няма връзка със Solax")
+        val plantId = row[Solax.plantId]; val type = row[Solax.businessType]
+        if (plantId == null || type == null) throw SolaxError("Няма връзка със Solax")
+        return Triple(row, plantId, type)
     }
 
     /** No battery (or no data): forget any old reading. A non-null [readAt] marks "asked then", so the next attempt waits for the next slot. */
@@ -895,6 +936,58 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
                 page++
             } while (page <= minOf(pages, 3))
             return total.takeIf { it > 0 } to firstRaw
+        }
+
+        /**
+         * Adds the time-of-use rule of one [day] (a full-day schedule: SolaX needs it to start at 00:00; the last segment ends at 23:59):
+         * self use up to the charge segment [from]-[to] (runMode 4, grid charging allowed, capped at [powerW]), self use after it.
+         * Returns `serial/ruleId` per inverter. Only the acceptance is known at once; SolaX carries the command out asynchronously.
+         */
+        suspend fun addChargeRule(sns: List<String>, type: Int, day: LocalDate, from: LocalTime, to: LocalTime, minSoc: Int, targetSoc: Int, powerW: Int): List<String> {
+            if (sns.isEmpty()) throw SolaxError("В Solax не е намерен инвертор")
+            val hm = DateTimeFormatter.ofPattern("HH:mm"); val md = DateTimeFormatter.ofPattern("MM-dd")
+            fun selfUse(a: LocalTime, b: LocalTime) = buildJsonObject { put("runMode", 1); put("startTime", a.format(hm)); put("endTime", b.format(hm)); put("minSoc", minSoc) }
+            val last = LocalTime.of(23, 59)
+            val segments = buildList {
+                if (from > LocalTime.MIN) add(selfUse(LocalTime.MIN, from))
+                add(buildJsonObject {
+                    put("runMode", 4); put("startTime", from.format(hm)); put("endTime", to.format(hm))
+                    put("chargePower", powerW); put("targetSoc", targetSoc); put("chargeGridEnableFlag", 1)
+                })
+                if (to < last) add(selfUse(to, last))
+            }
+            val body = buildJsonObject {
+                put("snList", JsonArray(sns.map { JsonPrimitive(it) })); put("businessType", type)
+                put("startDate", day.format(md)); put("endDate", day.format(md)); put("minSoc", minSoc)
+                put("runModeInfoList", JsonArray(segments))
+            }
+            val text = authed { t ->
+                val text = http.post("$baseUrl/openapi/v2/device/config/tou/add_tou_set") {
+                    header("Authorization", "bearer $t"); contentType(ContentType.Application.Json); setBody(body.toString())
+                }.bodyAsText()
+                val r = plantsJson.decodeFromString<ControlResp>(text)
+                check(r.code, r.message); text
+            }
+            val devices = (plantsJson.parseToJsonElement(text).jsonObject["result"] as? JsonObject)?.get("optDeviceList") as? JsonArray
+            val made = devices.orEmpty().mapNotNull { it as? JsonObject }.mapNotNull { d ->
+                val sn = (d["deviceSn"] as? JsonPrimitive)?.contentOrNull; val id = (d["ruleId"] as? JsonPrimitive)?.contentOrNull
+                if (sn != null && id != null && id != "null") "$sn/$id" else null
+            }
+            if (made.isEmpty()) throw SolaxError("Solax не потвърди правилото за зареждане")
+            return made
+        }
+
+        suspend fun deleteChargeRules(type: Int, rules: List<String>) {
+            for (rule in rules) {
+                val sn = rule.substringBefore('/'); val id = rule.substringAfter('/')
+                authed { t ->
+                    val r = http.post("$baseUrl/openapi/v2/device/config/tou/delete_tou_set") {
+                        header("Authorization", "bearer $t"); contentType(ContentType.Application.Json)
+                        setBody(buildJsonObject { put("deviceSn", sn); put("businessType", type); put("ruleId", id) }.toString())
+                    }.body<ControlResp>()
+                    check(r.code, r.message)
+                }
+            }
         }
 
         suspend fun statistics(plantId: String, knownType: Int?, month: String): Pair<Int, List<StatRow>> {

@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
@@ -51,14 +52,15 @@ class HttpError(val status: HttpStatusCode, message: String) : Exception(message
 @Serializable class Me(val email: String)
 @Serializable class NewLocation(val name: String = "", val country: String? = null, val lat: Double = 0.0, val lon: Double = 0.0, val tz: String? = null)
 @Serializable class PlaceSettings(
-    val solar: Boolean, val supplier: String? = null, val reservedPct: Int? = null,
+    val solar: Boolean, val supplier: String? = null, val reservedPct: Int? = null, val allowControl: Boolean? = null, val maxChargeW: Int? = null,
     val solaxClientId: String = "", val solaxClientSecret: String = "", val solaxPlantId: String = "",
 )
 @Serializable class LocationOut(
-    val id: Long, val name: String, val country: String?, val solar: Boolean, val supplier: String = DEFAULT_SUPPLIER, val reservedPct: Int = DEFAULT_RESERVE,
+    val id: Long, val name: String, val country: String?, val solar: Boolean, val supplier: String = DEFAULT_SUPPLIER, val reservedPct: Int = DEFAULT_RESERVE, val allowControl: Boolean = false, val maxChargeW: Int = DEFAULT_MAX_CHARGE_W,
     val solaxClientId: String = "", val solaxPlantId: String = "", val solaxHasSecret: Boolean = false, val solaxStatus: String = "",
     val solaxBatteryStatus: String = "", val solaxBatteryInfo: String = "", val solaxPlants: List<PlantOption> = emptyList(), // the secret is never sent back
 )
+@Serializable class PlaceOrder(val ids: List<Long> = emptyList())
 @Serializable class Msg(val message: String)
 
 /** HTTP port from the PORT environment variable; 8081 when unset or blank. A set but invalid value fails fast. */
@@ -92,7 +94,7 @@ fun main() {
 }
 
 private fun locationOut(r: ResultRow, info: SolaxInfo?) = LocationOut(
-    r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar], r[Locations.supplier], r[Locations.reservedPct],
+    r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar], r[Locations.supplier], r[Locations.reservedPct], r[Locations.allowControl], r[Locations.maxChargeW],
     info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(), info?.batteryStatus.orEmpty(), info?.batteryInfo.orEmpty(), info?.plants.orEmpty(),
 )
 
@@ -182,7 +184,7 @@ fun Application.module() {
 
             get("/locations") {
                 val id = call.userId()
-                val rows = transaction { Locations.selectAll().where { Locations.userId eq id }.orderBy(Locations.id).toList() }
+                val rows = transaction { Locations.selectAll().where { Locations.userId eq id }.orderBy(Locations.position to SortOrder.ASC, Locations.id to SortOrder.ASC).toList() }
                 val infos = solax.infos(rows.map { it[Locations.id] })
                 call.respond(rows.map { locationOut(it, infos[it[Locations.id]]) })
             }
@@ -195,9 +197,11 @@ fun Application.module() {
                 val n = transaction { Locations.selectAll().where { Locations.userId eq id }.count() }
                 if (n >= 20) badRequest("Най-много 20 места")
                 val newId = transaction {
+                    val next = (Locations.selectAll().where { Locations.userId eq id }.maxOfOrNull { it[Locations.position] } ?: -1) + 1 // after the last
                     Locations.insert {
                         it[userId] = id; it[Locations.name] = name; it[country] = l.country?.take(80)
                         it[lat] = l.lat; it[lon] = l.lon; it[Locations.tz] = tz
+                        it[position] = next
                     }[Locations.id]
                 }
                 // fill the database right away; if Open-Meteo is unreachable the background loop retries
@@ -205,17 +209,30 @@ fun Application.module() {
                     .onFailure { call.application.environment.log.warn("Initial fetch failed for $name: ${it.message}") }
                 call.respond(HttpStatusCode.Created, LocationOut(newId, name, l.country, false))
             }
+            put("/locations/order") { // the whole list of the user's place ids in the new order
+                val uid = call.userId()
+                val ids = call.receive<PlaceOrder>().ids
+                transaction {
+                    val own = Locations.selectAll().where { Locations.userId eq uid }.map { it[Locations.id] }
+                    if (ids.size != own.size || ids.toSet() != own.toSet()) badRequest("Невалиден ред на местата")
+                    ids.forEachIndexed { i, lid -> Locations.update({ (Locations.id eq lid) and (Locations.userId eq uid) }) { it[position] = i } }
+                }
+                call.respond(Msg("ok"))
+            }
             put("/locations/{id}") {
                 val uid = call.userId()
                 val lid = call.parameters["id"]?.toLongOrNull() ?: badRequest("Невалиден идентификатор")
                 val p = call.receive<PlaceSettings>()
                 if (p.supplier != null && p.supplier !in TARIFFS) badRequest("Непознат доставчик")
                 if (p.reservedPct != null && p.reservedPct !in 0..MAX_RESERVE) badRequest("Резервът трябва да е между 0 и $MAX_RESERVE %")
+                if (p.maxChargeW != null && p.maxChargeW !in MIN_MAX_CHARGE_W..MAX_MAX_CHARGE_W) badRequest("Мощността на зареждане трябва да е между ${MIN_MAX_CHARGE_W / 1000.0} и ${MAX_MAX_CHARGE_W / 1000} kW")
                 val updated = transaction {
                     Locations.update({ (Locations.id eq lid) and (Locations.userId eq uid) }) {
                         it[solar] = p.solar
                         if (p.supplier != null) it[supplier] = p.supplier
                         if (p.reservedPct != null) it[reservedPct] = p.reservedPct
+                        if (p.allowControl != null) it[allowControl] = p.allowControl
+                        if (p.maxChargeW != null) it[maxChargeW] = p.maxChargeW
                     }
                 }
                 if (updated == 0) throw HttpError(HttpStatusCode.NotFound, "Няма такова място")
@@ -244,7 +261,7 @@ fun Application.module() {
 
             get("/report") {
                 val uid = call.userId()
-                val locs = transaction { Locations.selectAll().where { Locations.userId eq uid }.orderBy(Locations.id).map(::locOf) }
+                val locs = transaction { Locations.selectAll().where { Locations.userId eq uid }.orderBy(Locations.position to SortOrder.ASC, Locations.id to SortOrder.ASC).map(::locOf) }
                 val reports = locs.map { loc ->
                     val days = weather.days(loc)
                     if (days.isEmpty()) {

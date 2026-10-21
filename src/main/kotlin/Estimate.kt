@@ -6,6 +6,9 @@ import kotlin.math.round
 /** The battery charge (%) reserved by default, and the range a place may set: below it the house is served from the grid. */
 const val DEFAULT_RESERVE = 0
 const val MAX_RESERVE = 50
+const val DEFAULT_MAX_CHARGE_W = 2000
+const val MIN_MAX_CHARGE_W = 500
+const val MAX_MAX_CHARGE_W = 6000
 
 /** One 5-minute step of the estimate for the rest of today; t is local HH:mm. All powers in W. */
 @Serializable
@@ -98,4 +101,5 @@ fun compensation(pattern: DoubleArray, pvW: (Int) -> Double, dayStart: Int, nigh
 class NightPlan(
     val day: String, val foundAt: Long, val checkedAt: Long, val dayStartKwh: Double, val solarKwh: Double, val totalKwh: Double,
     val targetSoc: Double, val sunAt: String?, val stopBy: String, val socNow: Double?, val reached: Boolean,
+    val ruleId: String? = null, val ruleSoc: Double? = null, val control: String? = null,
 )
