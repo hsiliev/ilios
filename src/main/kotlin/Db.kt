@@ -3,8 +3,8 @@ package ilios
 import org.jetbrains.exposed.v1.core.ReferenceOption
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.jdbc.Database
-import org.jetbrains.exposed.v1.jdbc.SchemaUtils
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.migration.jdbc.MigrationUtils
 
 /** Users. */
 object Users : Table("users") {
@@ -178,7 +178,9 @@ fun initDb(path: String) {
         val hadDeviceKwh = runCatching { exec("SELECT battery_device_kwh FROM solax WHERE 1 = 0") }.isSuccess
         // days stored before the consumption and grid columns existed are fetched again once
         val hadLoadW = runCatching { exec("SELECT load_w FROM discharge_days WHERE 1 = 0") }.isSuccess
-        SchemaUtils.createMissingTablesAndColumns(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, SolarToday, DischargeDays, NightPlans, GeocodeCache)
+        val tables = arrayOf(Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays, SolarToday, DischargeDays, NightPlans, GeocodeCache)
+        // only additions: H2 refuses to drop the indexes behind foreign keys, and nothing is meant to be dropped here
+        MigrationUtils.statementsRequiredForDatabaseMigration(*tables).filterNot { it.startsWith("DROP ") }.forEach { exec(it) }
         if (!hadLoadW) exec("DELETE FROM discharge_days")
         if (!hadAc || !hadLoad) exec("UPDATE solax SET produced_through = NULL")
         if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")

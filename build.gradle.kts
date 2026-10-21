@@ -23,6 +23,7 @@ dependencies {
     implementation("io.insert-koin:koin-ktor:4.2.2")
     implementation("org.jetbrains.exposed:exposed-core:$exposed")
     implementation("org.jetbrains.exposed:exposed-jdbc:$exposed")
+    implementation("org.jetbrains.exposed:exposed-migration-jdbc:$exposed")
     implementation("com.h2database:h2:2.5.252")
     implementation("org.eclipse.angus:angus-mail:2.0.5")
     implementation("org.slf4j:slf4j-simple:2.0.17")

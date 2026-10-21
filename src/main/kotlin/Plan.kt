@@ -78,7 +78,7 @@ class NightPlanner(private val weather: WeatherService, private val solax: Solax
         }
         if (stopReason != null) {
             if (running == null) return keep
-            return try { solax.stopCharge(loc); null to stopReason } catch (e: CancellationException) { throw e } catch (e: Exception) { failed(loc, e, running, existing?.control) }
+            return try { solax.stopCharge(loc); null to stopReason } catch (e: CancellationException) { throw e } catch (e: Exception) { failed(loc, e, running, existing.control) }
         }
         val end = target.atTime(stopHour, 0).atZone(local.zone).toInstant().toEpochMilli()
         val missingKwh = (targetSoc - (plant.soc ?: return keep)) / 100 * (plant.batteryKwh ?: return keep)

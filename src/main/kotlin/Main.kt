@@ -79,8 +79,8 @@ fun baseUrlFrom(value: String?, port: Int): String {
     return v
 }
 
-private val PORT = portFrom(null)
-private val BASE_URL = baseUrlFrom(null, PORT) // used in password-reset links
+private val PORT = portFrom(System.getenv("PORT"))
+private val BASE_URL = baseUrlFrom(System.getenv("BASE_URL"), PORT) // used in password-reset links
 private const val COOKIE = "sid"
 private val emailRe = Regex("^[^@\\s]{1,64}@[^@\\s]+\\.[^@\\s]+$")
 

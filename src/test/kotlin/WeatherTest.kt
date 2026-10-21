@@ -79,7 +79,7 @@ class WeatherTest {
         val first = daily(seen).single().url.parameters["past_days"]?.toInt()
         assertTrue(first != null && first in 7..14, "a new place needs last week's days, asked for $first")
         val stored = svc.days(loc).map { it.date }
-        assertTrue(today.minusDays(7) in stored || today.minusDays(first!!.toLong()) in stored)
+        assertTrue(today.minusDays(7) in stored || today.minusDays(first.toLong()) in stored)
         assertTrue(today.plusDays(13) in stored)
 
         svc.refresh(loc)

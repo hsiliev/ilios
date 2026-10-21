@@ -42,17 +42,18 @@ function placeSummary(r){
       day&&chip('Днес: макс. '+f1(day.tMax)+'°C, мин. '+f1(day.tMin)+'°C',h('b',{},f1(day.tMax,0)+'°'),h('span',{cls:'mut'},' / '+f1(day.tMin,0)+'°')),
       day&&chip('Валеж днес: '+f1(day.rainMm)+' мм',svg(ICONS.rain,'rain sm'),f1(day.rainMm)+' мм'),
       ...crops.map(([k,l])=>chip(l+': '+w[k].text,svg(ICONS[k],'crop sm'),svg(ICONS[w[k].water],'water sm '+w[k].water))),
-      b&&b.soc!=null&&chip(batteryText(b),batIcon(b.soc,'sm'),f1(b.soc,0)+'%'),
+      b&&b.soc!=null&&chip(batteryText(b),batIcon(b.soc,'sm'),f1(b.soc,0)+'%',b.powerW>50&&svg(ICONS.zap,'ev zap sm')),
       b&&tom&&(()=>{if(!(b.batteryKwh>0))return chip('Утре: очаквано производство '+f1(tom.kwh)+' kWh',f1(tom.kwh)+' kWh');
         const full=tom.kwh>=b.batteryKwh;
         return chip('Утре: '+f1(tom.kwh)+' kWh – батерията '+(full?'може':'не може')+' да се зареди напълно от слънцето',svg(ICONS[full?'yes_':'no_'],'sm ev '+(full?'okc':'nox')),f1(tom.kwh)+' kWh')})()));
 }
 
-const sec=(t,...c)=>h('details',{cls:'sec',open:true},h('summary',{},svg(ICONS.chev,'chev sm'),h('h3',{},t)),...c);
+const sec=(t,...c)=>secOpen(false,t,...c);
+const secOpen=(open,t,...c)=>h('details',{cls:'sec',open},h('summary',{},svg(ICONS.chev,'chev sm'),h('h3',{},t)),...c);
 
 function recommendations(r){
   const w=r.watering,n=r.night,crops=[['plants','Растения'],['grass','Трева'],['trees','Дървета']];
-  return sec('Препоръки',
+  return secOpen(true,'Препоръки',
     h('div',{cls:'recgrid'},
     ...crops.map(([k,l])=>h('div',{cls:'rec'},svg(ICONS[k],'crop sm'),h('b',{},l),h('span',{cls:'rt'},svg(ICONS[w[k].water],'water sm '+w[k].water),w[k].text))),
     ...(n?[h('div',{cls:'rec'},batIcon(n.charge?20:100,'sm'),h('b',{},'Батерия през нощта'),h('span',{cls:'rt'},n.text))]:[]),
@@ -79,14 +80,20 @@ function reportCard(r,i,state){
 }
 
 
-export async function loadReports(){
+// the report is read from the database only, so polling costs no outside calls; the open sections are kept
+export async function loadReports(quiet){
   const box=$('#reports');
   try{
     const rs=await api('/report');
+    const was=[...box.querySelectorAll('details')].map(d=>d.open);
     const st=readOpen(),all=v=>()=>box.querySelectorAll('details.place').forEach(d=>{d.open=v});
     box.replaceChildren(...(rs.length?[
       ...(rs.length>1?[h('div',{cls:'bar'},h('button',{cls:'l',onclick:all(true)},'Разгъни всички'),h('button',{cls:'l',onclick:all(false)},'Свий всички'))]:[]),
       ...rs.map((r,i)=>reportCard(r,i,st))]:[h('p',{cls:'mut'},'Добавете място от ',h('a',{href:'#settings'},'настройките'),', за да започнете.')]));
-  }catch(x){say(x.message,1)}
+    const now=[...box.querySelectorAll('details')];
+    if(quiet&&now.length===was.length)now.forEach((d,i)=>{d.open=was[i]});
+  }catch(x){if(!quiet)say(x.message,1)}
 }
+
+setInterval(()=>{const box=$('#reports');if(!document.hidden&&box&&box.isConnected&&box.querySelector('details.place'))loadReports(true)},60000);
 
