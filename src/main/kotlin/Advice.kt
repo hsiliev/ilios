@@ -154,18 +154,22 @@ private fun bg(x: Double) = r1(x).toString().replace('.', ',')
 private fun bg2(x: Double) = "%.2f".format(java.util.Locale.ROOT, x).replace('.', ',')
 
 /**
- * What not charging the battery at night cost today. The charge at the first reading of the day shows what was missing; if the
- * sun did not bring the battery near full later (max charge below 95%), that missing energy had to come from the grid at day price.
+ * What not charging the battery at night cost today. Only the day zone from its start counts: while the battery is down at its reserved
+ * level (+1%) the house buys from the grid at day price what a night charge would have bought at night price. A battery that never ran
+ * empty lost nothing. Null until the day zone has started.
  */
-fun missedCharge(batteryKwh: Double, pts: List<TodayPoint>, dayPrice: Double = PRICE_DAY, nightPrice: Double = PRICE_NIGHT): MissedCharge? {
-    val socs = pts.mapNotNull { it.soc }
-    if (batteryKwh <= 0 || socs.isEmpty()) return null
-    val start = socs.first().coerceIn(0.0, 100.0); val peak = socs.max()
-    val room = batteryKwh * (1 - start / 100)
-    if (room < 0.5 || peak >= 95) return MissedCharge(0.0, 0.0, "Батерията е започнала деня с ${bg(start)}% и слънцето я е напълнило – няма пропусната икономия.")
-    val lost = room * (dayPrice - nightPrice)
-    return MissedCharge(r1(room), round(lost * 100) / 100,
-        "Батерията е започнала деня с ${bg(start)}% и не е стигнала 100% (макс. ${bg(peak)}%). Липсващите ≈ ${bg(room)} kWh не са заредени през нощта по ${bg2(nightPrice)} €/kWh – пропусната икономия ≈ ${bg2(lost)} €.")
+fun missedCharge(
+    batteryKwh: Double, pts: List<TodayPoint>, reservedPct: Int, dayFromHour: Int, dayPrice: Double = PRICE_DAY, nightPrice: Double = PRICE_NIGHT,
+): MissedCharge? {
+    val from = "%02d:00".format(dayFromHour)
+    val day = pts.filter { it.soc != null && it.t >= from }
+    if (batteryKwh <= 0 || day.isEmpty()) return null
+    val empty = day.filter { it.soc!! <= reservedPct + 1.0 }
+    val kwh = empty.sumOf { (it.gridW ?: 0.0).coerceAtLeast(0.0) } / 12000 // 5-minute steps
+    if (kwh < 0.1) return MissedCharge(0.0, 0.0, "Батерията не е свършила през деня – няма спестявания.")
+    val lost = kwh * (dayPrice - nightPrice)
+    return MissedCharge(r1(kwh), round(lost * 100) / 100,
+        "Батерията е стигнала резерва (${bg(reservedPct.toDouble())}%) и къщата е взела ≈ ${bg(kwh)} kWh от мрежата по дневна цена вместо по ${bg2(nightPrice)} €/kWh – пропусната икономия ≈ ${bg2(lost)} €.")
 }
 
 /** Weekly water need (mm) and how much of the last week's rain still counts (deep-rooted trees keep more). */
@@ -259,6 +263,6 @@ fun buildReport(
                 } else null,
         missed = if (battery != null) {
                     val (dayPrice, nightPrice) = TARIFFS[loc.supplier] ?: TARIFFS.getValue(DEFAULT_SUPPLIER)
-                    missedCharge(battery.batteryKwh, batteryToday, dayPrice, nightPrice)
+                    missedCharge(battery.batteryKwh, batteryToday, loc.reservedPct, nightZone(today, ZoneId.of(loc.tz)).second, dayPrice, nightPrice)
                 } else null)
 }
