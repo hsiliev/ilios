@@ -5,6 +5,8 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
@@ -81,6 +83,7 @@ fun baseUrlFrom(value: String?, port: Int): String {
 
 private val PORT = portFrom(System.getenv("PORT"))
 private val BASE_URL = baseUrlFrom(System.getenv("BASE_URL"), PORT) // used in password-reset links
+private val HTTPS = BASE_URL.startsWith("https://") // behind HTTPS (e.g. Caddy): Secure cookie and HSTS
 private const val COOKIE = "sid"
 private val emailRe = Regex("^[^@\\s]{1,64}@[^@\\s]+\\.[^@\\s]+$")
 
@@ -109,6 +112,14 @@ fun Application.module() {
             call.respond(HttpStatusCode.InternalServerError, Msg("Вътрешна грешка"))
         }
     }
+    intercept(ApplicationCallPipeline.Plugins) {
+        call.response.headers.apply {
+            append("X-Content-Type-Options", "nosniff")
+            append("X-Frame-Options", "DENY")
+            append("Referrer-Policy", "no-referrer")
+            if (HTTPS) append("Strict-Transport-Security", "max-age=31536000")
+        }
+    }
     val auth by inject<AuthService>()
     val weather by inject<WeatherService>()
     val solax by inject<SolaxService>()
@@ -119,7 +130,7 @@ fun Application.module() {
         request.cookies[COOKIE]?.let(auth::userFor) ?: throw HttpError(HttpStatusCode.Unauthorized, "Не сте влезли в профила си")
 
     fun ApplicationCall.startSession(token: String) = response.cookies.append(
-        Cookie(COOKIE, token, httpOnly = true, path = "/", maxAge = 14 * 24 * 3600, extensions = mapOf("SameSite" to "Lax")),
+        Cookie(COOKIE, token, httpOnly = true, secure = HTTPS, path = "/", maxAge = 14 * 24 * 3600, extensions = mapOf("SameSite" to "Lax")),
     )
 
     launch { weather.refreshLoop() }

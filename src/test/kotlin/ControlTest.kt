@@ -95,7 +95,7 @@ class ControlTest {
 
     // ---- the planner's decisions (NightPlanner.controlInverter) ----
 
-    private val now = at("2026-12-01", "01:00") // the night zone; the day zone starts at 07:00
+    private val now = at("2026-12-01", "01:00") // the night zone; the day zone starts at 07:00, charging should end at 06:55
     private fun planner(svc: SolaxService) = NightPlanner(WeatherService(HttpClient(MockEngine { respond("") })), svc)
     private fun plant(soc: Double, kwh: Double = 10.0) = SolaxPlant(kwp = 5.0, batteryKwh = kwh, soc = soc)
     private fun plan(chargeUntil: Long?) = NightPlan("2026-12-01", 0, 0, 0.0, 0.0, 0.0, 60.0, null, "07:00", 20.0, false, chargeUntil, "earlier")
@@ -103,19 +103,32 @@ class ControlTest {
     @Test fun `charging time is the missing energy over the power plus a margin`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
-        val (until, text) = planner(svc).controlInverter(loc, null, plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
+        val late = at("2026-12-01", "04:42") // 7980 s must start by 04:42
+        val (until, text) = planner(svc).controlInverter(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7)
         // 4 kWh at 2 kW = 2 h, +10 % for losses, +60 s
         assertEquals(7980, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
-        assertEquals(now.toInstant().toEpochMilli() + 7_980_000, until)
+        assertEquals(late.toInstant().toEpochMilli() + 7_980_000, until)
         assertTrue(text!!.contains("60%") && text.contains("2000 W"))
     }
 
-    @Test fun `charging never runs past the start of the day zone`() = runBlocking<Unit> {
+    @Test fun `charging waits so that it ends shortly before the day zone`() = runBlocking<Unit> {
+        val loc = place(maxChargeW = 2000)
+        val (svc, seen) = service { answer(it) }
+        val p = planner(svc)
+        val early = at("2026-12-01", "04:30") // the charge has to start at 04:42
+        assertEquals(null, p.controlInverter(loc, null, plant(20.0), 60.0, false, early, early.toLocalDate(), 7).first)
+        assertTrue(commands(seen).isEmpty())
+        val late = at("2026-12-01", "04:45") // the first reading after that: a bit late, so the timer is cut at 06:55
+        assertEquals(at("2026-12-01", "06:55").toInstant().toEpochMilli(), p.controlInverter(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7).first)
+        assertEquals(7800, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+    }
+
+    @Test fun `charging never runs past five minutes before the day zone`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
         val (until, _) = planner(svc).controlInverter(loc, null, plant(10.0, 30.0), 100.0, false, now, now.toLocalDate(), 7)
-        assertEquals(6 * 3600, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
-        assertEquals(at("2026-12-01", "07:00").toInstant().toEpochMilli(), until)
+        assertEquals(5 * 3600 + 55 * 60, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+        assertEquals(at("2026-12-01", "06:55").toInstant().toEpochMilli(), until)
     }
 
     @Test fun `a running charge is sent again with the time recomputed`() = runBlocking<Unit> {

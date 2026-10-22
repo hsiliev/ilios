@@ -13,10 +13,12 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import kotlin.math.round
 import kotlin.time.Duration.Companion.minutes
 
 /** Extra charging time (a share) for the losses of charging, so the battery really reaches the planned level. */
 private const val CHARGE_MARGIN = 1.1
+private const val CHARGE_END_BEFORE_MS = 5 * 60_000L // the charge should end this long before the day zone starts
 
 /** Plans older than this many days are dropped. */
 private const val KEEP_PLAN_DAYS = 14L
@@ -61,7 +63,7 @@ class NightPlanner(private val weather: WeatherService, private val solax: Solax
     /**
      * Remote-mode charging (SolaX Push Power at the place's max charging power) for the night plan; never throws (except cancellation).
      * Charging runs on a timer that the inverter honours by itself: the energy still missing divided by the power, plus a margin, and never
-     * past the day zone start ([stopHour]). Each fresh battery reading sends the command again with the time recomputed (a new command
+     * past 5 minutes before the day zone start ([stopHour]); a charge is not started before it has to be, so that it ends then. Each fresh battery reading sends the command again with the time recomputed (a new command
      * replaces a running one), and as soon as the plan is reached, or management is switched off, a running charge is ended. Returns the
      * time until which the inverter charges (null when it does not) and a status text.
      */
@@ -80,10 +82,14 @@ class NightPlanner(private val weather: WeatherService, private val solax: Solax
             if (running == null) return keep
             return try { solax.stopCharge(loc); null to stopReason } catch (e: CancellationException) { throw e } catch (e: Exception) { failed(loc, e, running, existing.control) }
         }
-        val end = target.atTime(stopHour, 0).atZone(local.zone).toInstant().toEpochMilli()
+        val end = target.atTime(stopHour, 0).atZone(local.zone).toInstant().toEpochMilli() - CHARGE_END_BEFORE_MS
         val missingKwh = (targetSoc - (plant.soc ?: return keep)) / 100 * (plant.batteryKwh ?: return keep)
-        val seconds = minOf((end - now) / 1000, (missingKwh / (loc.maxChargeW / 1000.0) * 3600 * CHARGE_MARGIN).toLong() + 60)
+        val need = (missingKwh / (loc.maxChargeW / 1000.0) * 3600 * CHARGE_MARGIN).toLong() + 60
+        val seconds = minOf((end - now) / 1000, need)
         if (seconds < 120) return keep // nothing worthwhile left before the day zone
+        // Charging early would be drained by the house again: wait until the charge has to start. The first reading after that is used, so it
+        // may start a little late and then charges a little less (the timer is capped at the end).
+        if (running == null && now < end - need * 1000) return keep
         return try {
             solax.startCharge(loc, seconds.toInt())
             val at = local.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
@@ -125,13 +131,17 @@ class NightPlanner(private val weather: WeatherService, private val solax: Solax
         val pv = DoubleArray(288) { i -> rad.lastOrNull { slotOf(it.t) <= i }?.radWm2?.let { kwp * it * ratio } ?: 0.0 }
         val c = compensation(pattern, { pv[it] }, tTo * 12, tFrom * 12, cap, loc.reservedPct)
         val at = now.toEpochMilli()
-        val reached = c.totalKwh <= 0 || soc >= c.targetSoc
-        val (chargeUntil, control) = controlInverter(loc, existing, plant, c.targetSoc, reached, local, target, tTo)
+        // The charge ends shortly before the day zone: add what the house is expected to use from the battery in between.
+        val gapSlots = (CHARGE_END_BEFORE_MS / 300_000).toInt()
+        val gapKwh = (tTo * 12 - gapSlots until tTo * 12).sumOf { pattern[it] } * 5 / 60 / 1000
+        val targetSoc = if (c.totalKwh > 0) minOf(100.0, round((c.targetSoc + gapKwh / cap * 100) * 10) / 10) else c.targetSoc
+        val reached = c.totalKwh <= 0 || soc >= targetSoc
+        val (chargeUntil, control) = controlInverter(loc, existing, plant, targetSoc, reached, local, target, tTo)
         transaction {
             NightPlans.deleteWhere { (NightPlans.locationId eq loc.id) and (NightPlans.day eq target.toString()) }
             NightPlans.insert {
                 it[locationId] = loc.id; it[day] = target.toString(); it[foundAt] = existing?.foundAt ?: at; it[checkedAt] = at
-                it[dayStartKwh] = c.dayStartKwh; it[solarKwh] = c.solarKwh; it[totalKwh] = c.totalKwh; it[targetSoc] = c.targetSoc
+                it[dayStartKwh] = c.dayStartKwh; it[solarKwh] = c.solarKwh; it[totalKwh] = c.totalKwh; it[NightPlans.targetSoc] = targetSoc
                 it[sunAt] = c.sunAt; it[stopBy] = "%02d:00".format(tTo); it[socNow] = soc; it[NightPlans.reached] = reached
                 it[NightPlans.chargeUntil] = chargeUntil; it[NightPlans.control] = control
             }

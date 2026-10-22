@@ -1,114 +1,107 @@
 # Ilios
 
-Small Kotlin web app (Ktor, Koin, Exposed, kotlinx.serialization, embedded H2) that uses [Open-Meteo](https://open-meteo.com) to:
+English: [README_ENG.md](README_ENG.md)
 
-- chart max/min temperature and rain for the previous, current and next week per location, plus today's forecast in 15-minute steps with weather events (cloudy, windy, rain, thunderstorm, snow),
-- recommend whether plants, grass and trees need watering,
-- chart daily solar generation (kWh) for the same three weeks, using the energy actually produced when the place is connected to SolaX Cloud (forecasts are calculated from Open-Meteo's solar radiation, the panel power SolaX reports and an efficiency worked out from your own measured days), marking with a yellow ⚡ each day on which charging would be needed.
+Малко уеб приложение на Kotlin (Ktor, Koin, Exposed, kotlinx.serialization, вградена H2), което използва [Open-Meteo](https://open-meteo.com), за да:
 
-Without SolaX there is no solar chart: the panel power and battery capacity needed for the forecast come from SolaX. Days for which SolaX has no measurement are drawn as pale estimates.
+- показва в графики максималната и минималната температура и дъжда за предходната, текущата и следващата седмица за всяко място, плюс прогнозата за днес през 15 минути със събития (облачно, ветровито, дъжд, гръмотевична буря, сняг),
+- препоръчва дали растенията, тревата и дърветата се нуждаят от поливане,
+- показва в графика дневното слънчево производство (kWh) за същите три седмици: когато мястото е свързано със SolaX Cloud, се ползва действително произведената енергия (прогнозите се смятат от слънчевата радиация на Open-Meteo, мощността на панелите, която съобщава SolaX, и ефективност, изчислена от собствените ви измерени дни), а с жълта ⚡ се отбелязва всеки ден, в който би било нужно зареждане.
 
-Accounts use email and password, with registration, login and password reset by email.
+Без SolaX няма слънчева графика: мощността на панелите и капацитетът на батерията, нужни за прогнозата, идват от SolaX. Дните, за които SolaX няма измерване, са нарисувани като бледи оценки.
 
-The interface, advice texts and emails are in Bulgarian, with dates as `дд.ММ.гггг` and a decimal comma. There is no language switch.
+Профилите са с имейл и парола, с регистрация, вход и възстановяване на паролата по имейл.
 
-## Requirements
+Интерфейсът, съветите и имейлите са на български, с дати във вида `дд.ММ.гггг` и десетична запетая. Няма превключване на езика.
 
-- JDK 17 or newer (developed on JDK 25)
-- Internet access to Open-Meteo
+## Изисквания
 
-Gradle is provided by the wrapper; nothing else needs installing.
+- JDK 17 или по-нова (разработва се с JDK 25)
+- Достъп до интернет за Open-Meteo
 
-## Configuration
+Gradle идва с wrapper-а; не е нужно да се инсталира нищо друго.
 
-Mail is configured with two environment variables, used to send password-reset emails through Gmail:
+## Настройка
 
-- `MAIL_USERNAME` – the Gmail address that sends the mail
-- `MAIL_PASSWORD` – its Google [app password](https://support.google.com/accounts/answer/185833?hl=en)
+Пощата се настройва с две променливи на средата, ползвани за изпращане на имейли за възстановяване на паролата през Gmail:
+
+- `MAIL_USERNAME` – Gmail адресът, който изпраща пощата
+- `MAIL_PASSWORD` – неговата [парола за приложения](https://support.google.com/accounts/answer/185833?hl=bg) на Google
 
 ```bash
 export MAIL_USERNAME='you@gmail.com'
 export MAIL_PASSWORD='xxxx xxxx xxxx xxxx'
 ```
 
-If either is missing the app still runs, but no mail is sent: reset links are printed to the server log (look for `PASSWORD RESET for`).
+Ако някоя липсва, приложението пак работи, но не се изпраща поща: връзките за възстановяване се отпечатват в журнала на сървъра (търсете `PASSWORD RESET for`).
 
-Optional variables:
+Незадължителни променливи:
 
-- `PORT` – HTTP port (default `8081`); reset links in emails point at `http://localhost:<PORT>`.
-- `BASE_URL` – public address used in password-reset links (default `http://localhost:$PORT`), e.g. `https://ilios.example.com`.
-- Electricity prices for the night-charge advice are constants (`PRICE_DAY`, `PRICE_NIGHT`) in `Advice.kt`: Electrohold's KEWR tariffs with VAT, 1 July 2026 to 30 June 2027; update them every July.
-- `MAIL_HOST` – SMTP host (default `smtp.gmail.com`).
-- `MAIL_PORT` – SMTP port (default `587`, STARTTLS).
-- `SOLAX_URL` – SolaX API host for your account's region (default `https://openapi-eu.solaxcloud.com`; the URL is under "My Account" in the SolaX developer portal).
+- `PORT` – HTTP порт (по подразбиране `8081`); връзките за възстановяване в имейлите сочат към `http://localhost:<PORT>`.
+- `BASE_URL` – публичният адрес във връзките за възстановяване на паролата (по подразбиране `http://localhost:$PORT`), напр. `https://ilios.example.com`.
+- Цените на електроенергията за съвета за нощно зареждане са константи (`PRICE_DAY`, `PRICE_NIGHT`) в `Advice.kt`: тарифите КЕВР на Електрохолд с ДДС, от 1 юли 2026 до 30 юни 2027; обновявайте ги всяка юли.
+- `MAIL_HOST` – SMTP сървър (по подразбиране `smtp.gmail.com`).
+- `MAIL_PORT` – SMTP порт (по подразбиране `587`, STARTTLS).
+- `SOLAX_URL` – адрес на SolaX API за региона на вашия профил (по подразбиране `https://openapi-eu.solaxcloud.com`; адресът е под „My Account“ в портала за разработчици на SolaX).
 
-Everything else is fixed: database in `./data/ilios`, the public Open-Meteo endpoints, and the reset-link host (always `localhost`). Change these in the source (`Main.kt`, `Mail.kt`, `Weather.kt`) if needed.
+Всичко останало е фиксирано: базата е в `./data/ilios`, публичните адреси на Open-Meteo и хостът във връзките за възстановяване (винаги `localhost`). Променяйте ги в изходния код (`Main.kt`, `Mail.kt`, `Weather.kt`), ако е нужно.
 
-## Run
+## Стартиране
 
 ```bash
 ./gradlew run
 ```
 
-Open <http://localhost:8081>, create an account, then:
+Отворете <http://localhost:8081>, създайте профил, после:
 
-1. Open the settings page (cog icon in the header). At the bottom, under **Ново място**, search for a place (e.g. София, Садовец, Агиос Йоанис Продромос) and click **Добави**. Several places share a name, so check the country and coordinates.
-2. Each place has its own card. Tick **Solax Cloud** for places with a SolaX solar system and enter that place's SolaX **Client ID** and **Client Secret** (see below), then click **Запази**. The panel power and battery capacity are read from SolaX, so they are not settings, and nothing else needs to be set for solar. Places without solar show only the weather charts and watering advice.
+1. Отворете страницата с настройки (иконата със зъбно колело в заглавието). Най-долу, под **Ново място**, потърсете място (напр. София, Садовец, Агиос Йоанис Продромос) и натиснете **Добави**. Няколко места имат еднакви имена, затова проверете държавата и координатите.
+2. Всяко място има свой панел. Отметнете **Solax Cloud** за места със слънчева система SolaX и въведете **Client ID** и **Client Secret** на SolaX за това място (вижте по-долу), после натиснете **Запази**. Мощността на панелите и капацитетът на батерията се четат от SolaX, затова не са настройки, и за слънцето не е нужно да се задава нищо друго. Местата без слънчева система показват само графиките за времето и съветите за поливане.
 
-### Standalone jar
+### Самостоятелен jar
 
 ```bash
 ./gradlew buildFatJar
 java -jar build/libs/ilios-all.jar
 ```
 
-or `./gradlew installDist`, then `build/install/ilios/bin/ilios`.
+или `./gradlew installDist`, после `build/install/ilios/bin/ilios`.
 
-## SolaX Cloud (produced energy)
+## SolaX Cloud (произведена енергия)
 
-Each place with a solar system can read its real daily production from [SolaX Cloud](https://developer.solaxcloud.com):
+Всяко място със слънчева система може да чете реалното си дневно производство от [SolaX Cloud](https://developer.solaxcloud.com):
 
-1. In the SolaX developer portal create an application and note its **Client ID** and **Client Secret**.
-2. On the settings page tick **Solax Cloud** for the place and fill in **Client ID** and **Client Secret**, then **Запази**. Once they connect, a **Централа** dropdown appears with the plants of the SolaX account by name, and the first one is selected. Choose another plant and save to switch; each place can use a different plant of the same account.
-3. The status line under the fields shows whether the connection works and what SolaX reported: panel power, battery capacity and the battery's current charge. Past days on the "Седмично слънце" chart are then drawn from the inverter's AC output (solid bars; the panels' `pvGeneration` only if the output is missing); today and the forecast show the solar forecast estimated from the reported panel power and stay pale. The estimate's efficiency (how much of the ideal `kWp × radiation` the system really delivers) is not a setting: it is calculated from your own measured days once at least three exist, and until then 75 % is assumed. Until the first successful sync the card says it is waiting for SolaX. The battery charge (percentage, energy left and whether it is charging) is shown as a chip on the collapsed place and as a gauge above the solar chart; it is read **every hour** (and once right after you connect the place), so it is the last hourly value with its time, not a live reading. If a reading fails it is retried hourly. The yellow ⚡ above the solar chart marks days on which charging would be needed: **for past days, the battery did not reach 100%**, taken from SolaX's battery history (99% or more counts as full); for today and the future they show whether the sun alone is expected to fill the battery, and a past day without history yet shows no icon (never a forecast).
+1. В портала за разработчици на SolaX създайте приложение и запишете неговите **Client ID** и **Client Secret**.
+2. На страницата с настройки отметнете **Solax Cloud** за мястото и попълнете **Client ID** и **Client Secret**, после **Запази**. След като се свържат, се появява падащо меню **Централа** с централите на профила в SolaX по име и първата е избрана. Изберете друга и запазете, за да смените; всяко място може да ползва друга централа от същия профил.
+3. Редът със състояние под полетата показва дали връзката работи и какво е съобщил SolaX: мощност на панелите, капацитет на батерията и текущия ѝ заряд. Миналите дни в графиката „Седмично слънце“ се рисуват от изхода на инвертора (плътни стълбове; `pvGeneration` на панелите само ако няма изход), а днес и прогнозата показват слънчева прогноза, оценена от съобщената мощност на панелите, и остават бледи. Ефективността на оценката (какъв дял от идеалното `kWp × радиация` системата наистина дава) не е настройка: изчислява се от собствените ви измерени дни, щом има поне три, а дотогава се приема 75 %. До първото успешно синхронизиране картата казва, че чака SolaX. Зарядът на батерията (процент, останала енергия и дали се зарежда) се показва като чип на свитото място и като измервател над слънчевата графика; чете се **всеки час** (и веднъж веднага след свързването на мястото), така че това е последната часова стойност с нейния час, не показание в реално време. Ако четенето не успее, повтаря се на всеки час. Жълтата ⚡ над слънчевата графика отбелязва дните, в които би било нужно зареждане: **за минали дни – батерията не е достигнала 100 %**, по историята на батерията от SolaX (99 % или повече се счита за пълна); за днес и бъдещето показва дали се очаква само слънцето да напълни батерията, а минал ден без история все още няма икона (никога прогноза).
 
-SolaX counts every API call, so nothing is polled. Produced energy of a past day never changes, so each day is fetched **once**: the days since the start of last week when you connect the place, then yesterday every morning after 02:00 local time. Days SolaX has no data for are not asked for again. The panel power and battery capacity are read when the place is first connected and then about once a week. The settings page lists the battery capacity figures side by side (the plant record's, the battery devices' rated capacity, and a usable capacity calculated from the remaining energy and charge); the calculated one is used for the chart, the gauge and the ⚡ icons when available. SolaX limits the number of API calls, so failures such as an exhausted quota are retried only after an hour. Leave Client ID empty and save to disconnect; the stored history stays. The Client Secret is stored in the database (`data/`), because it is needed to call the API, and is never sent back to the browser, so protect that folder.
+SolaX брои всяко обръщение към API, затова информацията се чете през определен интервал. Произведената енергия от минал ден никога не се променя, затова всеки ден се взима **веднъж**: дните от началото на миналата седмица при свързване на мястото, после вчерашния всяка сутрин след 02:00 местно време. Дни, за които SolaX няма данни, не се искат повторно. Мощността на панелите и капацитетът на батерията се четат при първото свързване на мястото и после около веднъж седмично. Страницата с настройки показва една до друга няколкото стойности за капацитета на батерията (на записа на централата, номиналния капацитет на батерийните устройства и използваем капацитет, изчислен от оставащата енергия и заряда); изчисленият се ползва за графиката, измервателя и иконите ⚡, когато е наличен. SolaX ограничава броя на обръщенията към API, затова при неуспехи, като изчерпана квота, повторният опит е чак след час. Оставете Client ID празно и запазете, за да прекъснете връзката; съхранената история остава. Client Secret се пази в базата данни (`data/`), защото е нужен за достъпа до API, и никога не се връща към браузъра, затова пазете тази папка.
 
-## Notes
+## Нощно зареждане
 
-- **What is refreshed when:**
+**Защо.** Енергията от мрежата е по-евтина нощем, а слънцето не винаги покрива следващия ден. За места с батерия приложението пресмята всяка нощ колко да се зареди от мрежата, така че следващият ден да не изисква мрежова енергия през деня, и не повече от това.
 
-  | Data | Source | When |
+**Какво прави:**
+
+1. Щом вечерта батерията се изтощи до резервирания си минимум, оценява следващия ден: очакваната консумация на къщата (от последната седмица, нагласена по времето) срещу слънчевата прогноза. Най-големият недостиг, преди слънцето да навакса, е енергията, която батерията трябва да има предварително.
+2. Зарежда това количество плюс малък запас за минутите преди началото на деня, или цяла батерия, ако е нужно повече, отколкото събира.
+3. Изчаква колкото може и завършва зареждането точно преди дневната тарифа, за да не изразходва къщата заряда през нощта.
+4. Планът се обновява с всяко показание на батерията, така че следва промените в прогнозата и в консумацията.
+
+Инверторът се управлява само ако **Разреши управлене** е включено за мястото; иначе планът се показва като съвет (съобщението върху седмичната графика, препоръката и ⚡). Кодът е в `Plan.kt` и `Estimate.kt`; подробности има в `AGENTS.md`.
+
+## Бележки
+
+- **Какво кога се обновява:**
+
+  | Данни | Източник | Кога |
   |---|---|---|
-  | Weather and the solar forecast | Open-Meteo | when a place is added, at start-up if older than an hour, then every hour (the forecast kWh is calculated from the stored weather). Past days are stored once and only asked for again if some are missing |
-  | Place search | Open-Meteo | once per distinct search; results are kept for 30 days |
-  | Produced energy of past days | SolaX | each day once: on connecting, then yesterday after 02:00 local time |
-  | Battery charge | SolaX | hourly (every 30 minutes during the night tariff zone, and once on connecting) |
-  | Highest battery charge of each past day | SolaX | each day once: on connecting one day per 10-minute pass until the last week is covered, then yesterday after 02:00 local time |
-  | Panel power, battery capacity | SolaX | on connecting, then weekly |
+  | Времето и слънчевата прогноза | Open-Meteo | при добавяне на място, при стартиране, ако са по-стари от час, после на всеки час (прогнозата в kWh се смята от съхраненото време). Миналите дни се съхраняват веднъж и се искат отново само ако някои липсват |
+  | Търсене на място | Open-Meteo | веднъж за всяка различна заявка; резултатите се пазят 30 дни |
+  | Произведена енергия за минали дни | SolaX | всеки ден веднъж: при свързване, после вчерашния след 02:00 местно време |
+  | Заряд на батерията | SolaX | на всеки час (на всеки 30 минути през нощната тарифна зона и веднъж при свързване) |
+  | Най-висок заряд на батерията за всеки минал ден | SolaX | всеки ден веднъж: при свързване по един ден на 10-минутен цикъл, докато се покрие последната седмица, после вчерашния след 02:00 местно време |
+  | Мощност на панелите, капацитет на батерията | SolaX | при свързване, после седмично |
 
-- Weather is stored in the database and pages read only from it. A background job fetches a place when it is added, at start-up if its data is older than an hour, and whenever it becomes an hour old. Past days are kept as first stored; today and future days are replaced on each refresh.
-- The database lives in `./data/`; back up or delete it to keep or reset all data.
-- Session cookies are not marked `Secure`, so put the app behind HTTPS only after enabling that in `Main.kt`.
-
-## Layout
-
-```
-src/main/kotlin/
-  Main.kt       Ktor server, Koin module, routes
-  Db.kt         Exposed tables and H2 setup
-  Auth.kt       registration, login, sessions, reset tokens, password hashing
-  Mail.kt       SMTP sender
-  Weather.kt    Open-Meteo client, database refresh and reads
-  Solax.kt      SolaX Cloud client (see solax-api.md)
-  Advice.kt     report model: 21-day series, watering advice
-src/main/resources/static/
-  index.html    page shell
-  style.css     styles
-  app.js        entry point: header, routing between the forecast and settings views
-  auth.js       login, registration and password-reset forms
-  dashboard.js  collapsible place cards, watering and summary chips
-  charts.js     the three SVG charts
-  settings.js   settings page: per-place cards and the add-place form
-  util.js       DOM helper, API calls, Bulgarian number/date formats, icons
-```
+- Времето се съхранява в базата данни и страниците четат само от нея. Фонова задача взима данните на място, когато то е добавено, при стартиране, ако данните му са по-стари от час, и всеки път, когато станат на час. Миналите дни се пазят такива, каквито са съхранени първия път; днешният и бъдещите дни се заменят при всяко обновяване.
+- Базата данни е в `./data/`; направете резервно копие или я изтрийте, за да запазите или нулирате всички данни.
+- Ако `BASE_URL` започва с `https://` (напр. зад Caddy), бисквитката на сесията е `Secure` и се изпраща HSTS; иначе (локално по HTTP) бисквитката не е `Secure`.
