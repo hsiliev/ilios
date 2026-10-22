@@ -121,7 +121,7 @@ export function powerChart(days,today,cap,estimate=null){
     const p=[];
     if(d.produced!=null)p.push(`панели ${num(d.produced)} kWh`);
     else p.push(`${d.date<today?'оценка':'прогноза'} ${num(d.kwh)} kWh`);
-    if(d.badCloud!=null)p.push(`! Solax върна невярна стойност (${num(d.badCloud,0)} kWh) – показана е оценка`);
+    if(d.badCloud!=null)p.push(`! SolaX върна невярна стойност (${num(d.badCloud,0)} kWh) – показана е оценка`);
     if(d.ac!=null)p.push(`инвертор ${num(d.ac)} kWh`);
     if(d.maxSoc!=null)p.push(`батерия ${num(d.maxSoc,0)}%`);
     if(d.loadKwh!=null)p.push(`консумация ${num(d.loadKwh)} kWh`);else if(d.loadEst!=null)p.push(`консумация (оценка) ${num(d.loadEst)} kWh`);

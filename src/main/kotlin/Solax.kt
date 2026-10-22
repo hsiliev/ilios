@@ -78,8 +78,8 @@ private val CHECK_EVERY = 10.minutes
 private const val OK = 10000
 private const val TOKEN_REJECTED = 10402
 private val QUOTA = mapOf(
-    10405 to "Лимитът на заявките към Solax е изчерпан – ще опитам отново по-късно",
-    10406 to "Достигнат е лимитът на честота на заявките към Solax – ще опитам отново по-късно",
+    10405 to "Лимитът на заявките към SolaX е изчерпан – ще опитам отново по-късно",
+    10406 to "Достигнат е лимитът на честота на заявките към SolaX – ще опитам отново по-късно",
 )
 private val NO_ACCESS = setOf(10403, 10500, 10505, 10506)
 private fun quotaError(code: Int) = SolaxError(QUOTA.getValue(code), if (code == 10405) QUOTA_RETRY_MS else RETRY_AFTER_MS)
@@ -311,7 +311,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             when {
                 id.isEmpty() -> { if (row != null) Solax.deleteWhere { Solax.locationId eq locationId }; false }
                 row == null -> {
-                    if (sec.isEmpty()) throw HttpError(HttpStatusCode.BadRequest, "Въведете Solax Client Secret")
+                    if (sec.isEmpty()) throw HttpError(HttpStatusCode.BadRequest, "Въведете SolaX Client Secret")
                     Solax.insert {
                         it[Solax.locationId] = locationId; it[Solax.clientId] = id; it[Solax.clientSecret] = sec
                         it[Solax.status] = "Изчаква първа синхронизация…"
@@ -391,10 +391,10 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         } catch (e: CancellationException) {
             throw e
         } catch (e: SolaxError) {
-            finish(loc.id, e.message ?: "Грешка от Solax", now.toEpochMilli() + e.retryMs)
+            finish(loc.id, e.message ?: "Грешка от SolaX", now.toEpochMilli() + e.retryMs)
         } catch (e: Exception) {
             System.err.println("SolaX request failed for place ${loc.id}: ${e::class.simpleName}")
-            finish(loc.id, "Няма връзка със Solax – ще опитам отново по-късно", now.toEpochMilli() + RETRY_AFTER_MS)
+            finish(loc.id, "Няма връзка със SolaX – ще опитам отново по-късно", now.toEpochMilli() + RETRY_AFTER_MS)
         }
     }
 
@@ -435,7 +435,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
                 !listWasLoaded -> { // new credentials led to an account without the old plant: start over with its first plant
                     wipePlantHistory(loc.id); wiped = true; all.first()
                 }
-                else -> throw SolaxError("Централа $known не е намерена в акаунта в Solax – изберете друга от списъка")
+                else -> throw SolaxError("Централа $known не е намерена в акаунта в SolaX – изберете друга от списъка")
             }
             plantId = chosen.plantId.content; plantName = chosen.plantName; pvKwp = chosen.pvCapacity
             // the batteries' own rated capacity (from the device list):
@@ -503,9 +503,9 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
     }
 
     private fun connection(loc: Loc): Triple<ResultRow, String, Int> {
-        val row = transaction { Solax.selectAll().where { Solax.locationId eq loc.id }.singleOrNull() } ?: throw SolaxError("Няма връзка със Solax")
+        val row = transaction { Solax.selectAll().where { Solax.locationId eq loc.id }.singleOrNull() } ?: throw SolaxError("Няма връзка със SolaX")
         val plantId = row[Solax.plantId]; val type = row[Solax.businessType]
-        if (plantId == null || type == null) throw SolaxError("Няма връзка със Solax")
+        if (plantId == null || type == null) throw SolaxError("Няма връзка със SolaX")
         return Triple(row, plantId, type)
     }
 
@@ -541,7 +541,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
         try {
             val soc = readBattery(loc.id, row, Session(loc.id, row), plantId, type, now.toEpochMilli())
             val at = now.atZone(ZoneId.of(loc.tz)).format(stamp) // the place's own time
-            setBatteryStatus(loc.id, if (soc == null) "Solax не върна данни за батерията" else "Заряд на батерията: ${"%.0f".format(java.util.Locale.forLanguageTag("bg"), soc)}% към $at")
+            setBatteryStatus(loc.id, if (soc == null) "SolaX не върна данни за батерията" else "Заряд на батерията: ${"%.0f".format(java.util.Locale.forLanguageTag("bg"), soc)}% към $at")
             cacheToday(loc, now)
         } catch (e: CancellationException) {
             throw e
@@ -788,7 +788,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             val result = r.result
             if (r.code != 0 || result == null) {
                 if (r.code in QUOTA) throw quotaError(r.code)
-                throw SolaxError("Solax отказа достъпа – проверете Client ID и Secret", AUTH_RETRY_MS)
+                throw SolaxError("SolaX отказа достъпа – проверете Client ID и Secret", AUTH_RETRY_MS)
             }
             val expires = System.currentTimeMillis() + maxOf(0L, result.expiresIn - 3600) * 1000
             transaction { Solax.update({ Solax.locationId eq locationId }) { it[Solax.token] = result.accessToken; it[Solax.tokenExpires] = expires } }
@@ -801,7 +801,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             try {
                 return call(token ?: newToken())
             } catch (e: TokenRejected) {
-                try { return call(newToken()) } catch (e2: TokenRejected) { throw SolaxError("Solax отхвърли достъпа – проверете Client ID и Secret", AUTH_RETRY_MS) }
+                try { return call(newToken()) } catch (e2: TokenRejected) { throw SolaxError("SolaX отхвърли достъпа – проверете Client ID и Secret", AUTH_RETRY_MS) }
             }
         }
 
@@ -832,7 +832,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
                 }
                 if (plants.isNotEmpty()) return type to plants
             }
-            throw SolaxError("В акаунта в Solax не са намерени централи")
+            throw SolaxError("В акаунта в SolaX не са намерени централи")
         }
 
         /** Serial numbers of the plant's inverters (deviceType 1); batteries are then read through them. */
@@ -948,7 +948,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
 
         /** Remote-control command [path] (under `inverter_vpp_mode/`) for [sns]. Only the acceptance is known at once; the inverter acts about 5 minutes later in the cloud's data. */
         private suspend fun remoteCommand(path: String, sns: List<String>, type: Int, extra: JsonObjectBuilder.() -> Unit = {}) {
-            if (sns.isEmpty()) throw SolaxError("В Solax не е намерен инвертор")
+            if (sns.isEmpty()) throw SolaxError("В SolaX не е намерен инвертор")
             authed { t ->
                 val r = http.post("$baseUrl/openapi/v2/device/inverter_vpp_mode/$path") {
                     header("Authorization", "bearer $t"); contentType(ContentType.Application.Json)
@@ -979,7 +979,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
                     if (knownType != null || type == 4) throw e
                 }
             }
-            throw SolaxError("Solax не върна данни")
+            throw SolaxError("SolaX не върна данни")
         }
     }
 
@@ -988,8 +988,8 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             code == OK -> return
             code == TOKEN_REJECTED -> throw TokenRejected()
             code in QUOTA -> throw quotaError(code)
-            code in NO_ACCESS -> throw SolaxError("Нямате достъп до тази централа в Solax (код $code)", AUTH_RETRY_MS)
-            else -> throw SolaxError("Solax върна грешка $code" + (message?.let { ": ${it.take(120)}" } ?: ""))
+            code in NO_ACCESS -> throw SolaxError("Нямате достъп до тази централа в SolaX (код $code)", AUTH_RETRY_MS)
+            else -> throw SolaxError("SolaX върна грешка $code" + (message?.let { ": ${it.take(120)}" } ?: ""))
         }
     }
 }

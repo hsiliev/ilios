@@ -84,7 +84,7 @@ function nightLine(r){
 function reportCard(r,i,state){
   if(r.error)return h('div',{cls:'card'},h('h2',{},r.name,r.country?[' ',h('span',{cls:'mut'},r.country)]:''),h('div',{cls:'yes'},r.error));
   const b=r.battery,html=s=>{const d=h('div');d.innerHTML=s;return [d]};
-  const noSolar=h('p',{cls:'mut'},'Чака се връзка със Solax – въведете Client ID и Secret в ',h('a',{href:'#settings'},'настройките'),'. Мощността на панелите и капацитетът на батерията се вземат оттам.');
+  const noSolar=h('p',{cls:'mut'},'Чака се връзка със SolaX – въведете Client ID и Secret в ',h('a',{href:'#settings'},'настройките'),'. Мощността на панелите и капацитетът на батерията се вземат оттам.');
   return h('details',{cls:'card place',open:state[r.id]??i===0,      ontoggle:e=>{if(e.target!==e.currentTarget)return;const st=readOpen();st[r.id]=e.target.open;localStorage.setItem(OPEN_KEY,JSON.stringify(st))}},
     placeSummary(r),
     h('div',{cls:'pbody'},

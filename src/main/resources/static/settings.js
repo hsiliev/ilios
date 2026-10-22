@@ -50,7 +50,7 @@ function placeCard(l,reload,move){
     h('div',{cls:'row'},h('h2',{},grip,l.name,' ',h('span',{cls:'mut'},l.country||'')),
       h('span',{cls:'btns'},up,down,
       h('button',{type:'button',cls:'ib del',title:'Премахни',"aria-label":'Премахни '+l.name,onclick:run(async()=>{if(confirm('Премахване на '+l.name+'?')){await api('/locations/'+l.id,'DELETE');reload()}})},svg(ICONS.trash)))),
-    h('div',{cls:'panel'},h('div',{cls:'row'},h('label',{cls:'inl'},solar,' Solax Cloud'),refresh),cols));
+    h('div',{cls:'panel'},h('div',{cls:'row'},h('label',{cls:'inl'},solar,' SolaX Cloud'),refresh),cols));
   return {el,save,solar,id:l.id,up,down,grip};
 }
 
