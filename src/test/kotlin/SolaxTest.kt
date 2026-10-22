@@ -586,7 +586,7 @@ class SolaxTest {
         svc.sync(loc, noon)
 
         svc.readBatteryIfDue(loc, at("2026-10-16T08:00:00Z"))
-        assertContains(row(loc)[Solax.batteryStatus]!!, "Solax върна грешка")
+        assertContains(row(loc)[Solax.batteryStatus]!!, "SolaX върна грешка")
         assertEquals(null, svc.plant(loc.id)!!.soc)
         assertTrue(status(loc).startsWith("Свързано"), "production status is unaffected")
         assertTrue(svc.produced(loc.id).isNotEmpty())
