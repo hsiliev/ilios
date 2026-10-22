@@ -200,7 +200,12 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
     // ---- database-only reads and configuration ----
 
     fun produced(locationId: Long): Map<LocalDate, Double> = transaction {
-        Produced.selectAll().where { Produced.locationId eq locationId }.associate { LocalDate.parse(it[Produced.day]) to it[Produced.kwh] }
+        Produced.selectAll().where { (Produced.locationId eq locationId) and (Produced.bad eq false) }.associate { LocalDate.parse(it[Produced.day]) to it[Produced.kwh] }
+    }
+
+    /** Days whose SolaX production was impossible for the panels (kWh as returned), shown on the chart as bad cloud data. */
+    fun badProduced(locationId: Long): Map<LocalDate, Double> = transaction {
+        Produced.selectAll().where { (Produced.locationId eq locationId) and (Produced.bad eq true) }.associate { LocalDate.parse(it[Produced.day]) to it[Produced.kwh] }
     }
 
     fun plant(locationId: Long): SolaxPlant? = transaction {
@@ -460,6 +465,7 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
                 Produced.batchInsert(fresh) { (d, kwh, acLoad) ->
                     val (ac, load) = acLoad
                     this[Produced.locationId] = loc.id; this[Produced.day] = d.toString(); this[Produced.kwh] = kwh; this[Produced.acKwh] = ac; this[Produced.loadKwh] = load
+                    this[Produced.bad] = pvKwp != null && pvKwp > 0 && kwh > pvKwp * 24
                 }
             }
             Solax.update({ Solax.locationId eq loc.id }) {

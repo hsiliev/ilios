@@ -107,6 +107,7 @@ export function powerChart(days,today,cap,estimate=null){
   const bar=(i,v,cls)=>{const bw=step*.62;return v>0?`<rect x="${cx(i)-bw/2}" y="${y(v)}" width="${bw}" height="${T+ih-y(v)}" rx="2" class="${cls}"/>`:''};
   days.forEach((d,i)=>{
     o+=bar(i,val(d),measured(d)?'kprod':'kfc');
+    if(d.badCloud!=null)o+=`<text x="${cx(i)}" y="${y(val(d))-5}" class="badc" text-anchor="middle">!</text>`;
     if(lf(d)>0){const bw=step*.62;o+=`<rect x="${cx(i)-bw/2}" y="${T+ih}" width="${bw}" height="${lf(d)*pxk}" rx="2" class="${d.loadKwh!=null?'kbat':'kbatf'}"/>`}
     // icon row above the plot: a lightning where the battery did not reach 100 % (past day) or the sun alone is not expected to fill it
     // (today and the future, judged from the forecast), i.e. where charging would be needed; nothing when it is full or the history is not fetched yet
@@ -120,6 +121,7 @@ export function powerChart(days,today,cap,estimate=null){
     const p=[];
     if(d.produced!=null)p.push(`панели ${num(d.produced)} kWh`);
     else p.push(`${d.date<today?'оценка':'прогноза'} ${num(d.kwh)} kWh`);
+    if(d.badCloud!=null)p.push(`! Solax върна невярна стойност (${num(d.badCloud,0)} kWh) – показана е оценка`);
     if(d.ac!=null)p.push(`инвертор ${num(d.ac)} kWh`);
     if(d.maxSoc!=null)p.push(`батерия ${num(d.maxSoc,0)}%`);
     if(d.loadKwh!=null)p.push(`консумация ${num(d.loadKwh)} kWh`);else if(d.loadEst!=null)p.push(`консумация (оценка) ${num(d.loadEst)} kWh`);

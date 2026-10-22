@@ -71,6 +71,7 @@ class DayPoint(
     val loadEst: Double? = null, // today and later: estimated total consumption from the temperature and the sun, learnt from past days
     val homeKwh: Double? = null, // today and later: expected daytime consumption of the house, which the sun has to cover before the battery gets any
     val plan: NightPlan? = null, // the night-charge plan worked out for this day, when the battery was found at its minimum
+    val badCloud: Double? = null, // past days: the impossible production (kWh) SolaX returned, ignored in favour of the estimate
 )
 
 /** One step of today's forecast at the finest resolution Open-Meteo offers. event: thunder | snow | rain | wind | cloud */
@@ -204,7 +205,7 @@ fun buildReport(
     produced: Map<LocalDate, Double> = emptyMap(), plant: SolaxPlant? = null, ac: Map<LocalDate, Double> = emptyMap(),
     maxSoc: Map<LocalDate, Double> = emptyMap(), batteryToday: List<TodayPoint> = emptyList(), load: Map<LocalDate, Double> = emptyMap(),
     dischargeProfile: List<DischargePoint> = emptyList(), loadHistory: List<Map<String, Double>> = emptyList(),
-    plans: Map<LocalDate, NightPlan> = emptyMap(),
+    plans: Map<LocalDate, NightPlan> = emptyMap(), badCloud: Map<LocalDate, Double> = emptyMap(),
 ): Report {
     val kwp = plant?.kwp ?: 0.0 // installed PV power comes from SolaX; without it there is no estimate
     val ratio = calibratedRatio(days, produced, kwp, today)
@@ -218,7 +219,7 @@ fun buildReport(
         DayPoint(it.date.toString(), it.tMax, it.tMin, r1(it.rainMm), r1(solarKwh(it, kwp, ratio)), produced[it.date]?.let(::r1), ac[it.date]?.let(::r1), maxSoc[it.date]?.let(::r1),
             if (it.date < today) load[it.date]?.let(::r1) else null,
             if (it.date >= today) estimateLoad(samples, meanTemp(it.tMax, it.tMin), sun)?.let(::r1) else null,
-            if (it.date >= today) homeDay?.let(::r1) else null, plans[it.date])
+            if (it.date >= today) homeDay?.let(::r1) else null, plans[it.date], badCloud[it.date]?.let(::r1))
     }
 
     // Rain: accumulated from the start of last week through today vs. expected from tomorrow to the end of next week.

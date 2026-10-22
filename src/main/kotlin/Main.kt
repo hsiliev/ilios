@@ -290,6 +290,7 @@ fun Application.module() {
                             if (loc.solar) solax.dischargeProfile(loc.id, today) else emptyList(),
                             if (loc.solar) solax.loadDays(loc.id, today) else emptyList(),
                             if (loc.solar) nightPlans(loc.id) else emptyMap(),
+                            if (loc.solar) solax.badProduced(loc.id) else emptyMap(),
                         )
                     }
                 }

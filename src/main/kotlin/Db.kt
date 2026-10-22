@@ -79,6 +79,7 @@ object Produced : Table("produced") {
     val kwh = double("kwh") // PV generation: what the panels produced
     val acKwh = double("ac_kwh").nullable() // inverter AC output (the SolaX app's "Inverter Output"), kept to compare with kwh
     val loadKwh = double("load_kwh").nullable() // the home's total consumption that day (heat pump included), for the battery forecast
+    val bad = bool("bad").default(false) // SolaX returned an impossible kwh (more than the panels can make in a day): kept to mark it, never used
     override val primaryKey = PrimaryKey(locationId, day)
 }
 
@@ -184,6 +185,8 @@ fun initDb(path: String) {
         if (!hadLoadW) exec("DELETE FROM discharge_days")
         if (!hadAc || !hadLoad) exec("UPDATE solax SET produced_through = NULL")
         if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")
+        // a day above kWp x 24 is a bad cloud value, also in rows stored before the check existed
+        exec("UPDATE produced SET bad = TRUE WHERE kwh > (SELECT pv_kwp * 24 FROM solax WHERE solax.location_id = produced.location_id)")
         // obsolete: the old per-user settings table and the typed-in performance ratio (now calibrated from SolaX data)
         exec("DROP TABLE IF EXISTS settings")
         exec("DROP TABLE IF EXISTS tuya") // the abandoned Tuya Cloud connection

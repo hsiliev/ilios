@@ -20,7 +20,7 @@ table{border-collapse:collapse;width:100%}td,th{padding:4px 8px;text-align:right
 .chart .now{stroke:var(--fg);stroke-width:1.2;stroke-dasharray:3 3}.chart .hit{fill:transparent}.chart .hit:hover{fill:var(--fg);opacity:.07}
 .chart .rainbar{fill:var(--crain)}.chart .band{fill:#38bdf8;opacity:.18}
 .chart .lmax{fill:none;stroke:var(--cmax);stroke-width:2.2;stroke-linejoin:round}.chart .lmin{fill:none;stroke:var(--cmin);stroke-width:2.2;stroke-linejoin:round}
-.chart .kprod{fill:var(--kprod)}.chart .kbat{fill:var(--kbat)}.chart .kbatf{fill:var(--kbat);opacity:.45}.chart .kfc{fill:var(--kprod);opacity:.45}.chart .capw{fill:none;stroke:var(--mut);stroke-width:1.1;stroke-linecap:round}
+.chart .kprod{fill:var(--kprod)}.chart .kbat{fill:var(--kbat)}.chart .kbatf{fill:var(--kbat);opacity:.45}.chart .kfc{fill:var(--kprod);opacity:.45}.chart .badc{fill:#dc2626;font-size:15px;font-weight:700}.chart .capw{fill:none;stroke:var(--mut);stroke-width:1.1;stroke-linecap:round}
 .chart .bsoc{fill:none;stroke:var(--cbat);stroke-width:2.2;stroke-linejoin:round}
 .chart .halo{paint-order:stroke;stroke:var(--card);stroke-width:3px}
 .ev{fill:none;stroke:var(--mut);stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.ev.thunder{stroke:#d97706}.ev.rain,.ev.snow{stroke:#2563eb}.ev.wind{stroke:#0891b2}.ev.zap{stroke:#ca8a04;fill:#facc15}.chart .nightz{fill:var(--fg);opacity:.07}

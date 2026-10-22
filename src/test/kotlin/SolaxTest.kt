@@ -350,6 +350,27 @@ class SolaxTest {
     }
 
     @Test
+    fun aDayAboveWhatThePanelsCanMakeIsBadCloudDataAndIsNotUsed() = runBlocking {
+        val loc = place()
+        val d = today.minusDays(1)
+        val (svc, _) = service { req ->
+            when {
+                req.url.encodedPath.endsWith("/oauth/token") -> token
+                req.url.encodedPath.endsWith("/page_plant_info") -> onePlant
+                req.url.encodedPath.endsWith("/get_stat_data") ->
+                    """{"code":10000,"result":{"plantEnergyStatDataList":[{"date":"$d","pvGeneration":4383.2,"inverterACOutputEnergy":13.4}]}}"""
+                else -> other(req)
+            }
+        }
+
+        svc.sync(loc, noon)
+
+        assertFalse(svc.produced(loc.id).containsKey(d), "5 kWp cannot make 4383 kWh: the estimate is used instead")
+        assertEquals(4383.2, svc.badProduced(loc.id).getValue(d))
+        assertEquals(13.4, svc.producedAc(loc.id).getValue(d), "the other figures of that day are kept")
+    }
+
+    @Test
     fun disconnectingRemovesTheCredentialsButKeepsTheHistory() {
         val loc = place()
         transaction { Produced.insert { it[locationId] = loc.id; it[day] = today.toString(); it[kwh] = 7.0 } }
