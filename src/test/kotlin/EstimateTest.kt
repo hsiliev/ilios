@@ -71,4 +71,56 @@ class EstimateTest {
         assertEquals(10.0, e.points.last().soc, 1e-9)
         assertTrue(e.importKwh > 0) // the whole load comes from the grid
     }
+
+    @Test
+    fun theEstimateCanRunPastMidnightWithoutChangingTheSummaryOfToday() {
+        val pattern = DoubleArray(576) { 100.0 }
+        val today = estimateDay(slotOf("22:00"), 50.0, 10.0, pattern) { 0.0 }!!
+        val ahead = estimateDay(slotOf("22:00"), 50.0, 10.0, pattern, untilSlot = slotOf("22:00") + 144) { 0.0 }!!
+
+        assertEquals(144, ahead.points.size)
+        assertEquals("00:00", ahead.points[24].t)
+        assertEquals(today.peakSoc, ahead.peakSoc)
+        assertEquals(today.importKwh, ahead.importKwh)
+        assertTrue(ahead.points.last().soc < today.points.last().soc, "the night after midnight keeps draining the battery")
+    }
+
+    @Test
+    fun thePlannedChargeIsDrawnFromTheGridAndRaisesTheBatteryUntilItsTarget() {
+        val pattern = DoubleArray(576) { 500.0 }
+        val now = slotOf("22:00"); val end = 288 + slotOf("06:55")
+        val plain = estimateDay(now, 0.0, 10.0, pattern, 0, end) { 0.0 }!!
+        val start = plannedChargeStart(plain, now, end, 10.0, 60.0, 2000.0, 1.1, false)!!
+        assertTrue(start > now && start < end, "waits until it has to start: $start")
+        assertEquals(end.toDouble(), start + 6.0 / 2.0 * 1.1 * 12, 1.0) // 6 kWh at 2 kW, with the margin, ends at the end slot
+
+        val e = estimateDay(now, 0.0, 10.0, pattern, 0, end, PlannedCharge(start, end, 2000.0, 60.0)) { 0.0 }!!
+        val charging = e.points.filter { it.chargeW > 0 }
+        assertTrue(charging.isNotEmpty() && charging.all { it.gridW >= it.chargeW && it.batW == 0.0 })
+        assertEquals(60.0, e.points.last().soc, 0.5)
+        assertTrue(e.points.all { it.soc <= 60.0 + 1e-9 }, "stops at the target")
+    }
+}
+
+class ProjectedChargeTest {
+    private val today = java.time.LocalDate.of(2026, 10, 22)
+    private fun report(allow: Boolean): Report {
+        val days = (-8L..3L).map { Day(today.plusDays(it), 15.0, 8.0, 0.0, 10.0) }
+        val steps = (0 until 96).map { IntraPoint("%02d:%02d".format(it / 4, it % 4 * 15), 10.0, 0.0, null, if (it in 36..68) 400.0 else 0.0) }
+        val history = (1..3).map { (0 until 288).associate { i -> slotName(i) to 400.0 } }
+        val load = (1L..8L).associate { today.minusDays(it) to 9.6 }
+        return buildReport(
+            Loc(1, "p", 42.0, 23.0, "Europe/Sofia", true, reservedPct = 10, allowControl = allow, maxChargeW = 2000), days, today,
+            Intraday("22:58", 15, steps, steps, steps), plant = SolaxPlant(9.0, 10.0, 30.0), load = load, loadHistory = history,
+        )
+    }
+
+    @Test
+    fun theEstimateShowsTheClimbOfTheIntendedNightChargeBeforeThePlanExists() {
+        val on = report(true).estimate!!
+        assertTrue(on.points.any { it.chargeW > 0 }, "a charge is projected")
+        val floorAt = on.points.indexOfFirst { it.soc <= 11.0 }
+        assertTrue(floorAt >= 0 && on.points.drop(floorAt).any { it.soc > 30.0 }, "the battery rises again after reaching its minimum")
+        assertTrue(report(false).estimate!!.points.none { it.chargeW > 0 }, "no charge without management")
+    }
 }

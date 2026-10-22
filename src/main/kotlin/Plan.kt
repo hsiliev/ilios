@@ -17,8 +17,8 @@ import kotlin.math.round
 import kotlin.time.Duration.Companion.minutes
 
 /** Extra charging time (a share) for the losses of charging, so the battery really reaches the planned level. */
-private const val CHARGE_MARGIN = 1.1
-private const val CHARGE_END_BEFORE_MS = 5 * 60_000L // the charge should end this long before the day zone starts
+internal const val CHARGE_MARGIN = 1.1
+internal const val CHARGE_END_BEFORE_MS = 5 * 60_000L // the charge should end this long before the day zone starts
 
 /** Plans older than this many days are dropped. */
 private const val KEEP_PLAN_DAYS = 14L
@@ -133,8 +133,7 @@ class NightPlanner(private val weather: WeatherService, private val solax: Solax
         val at = now.toEpochMilli()
         // The charge ends shortly before the day zone: add what the house is expected to use from the battery in between.
         val gapSlots = (CHARGE_END_BEFORE_MS / 300_000).toInt()
-        val gapKwh = (tTo * 12 - gapSlots until tTo * 12).sumOf { pattern[it] } * 5 / 60 / 1000
-        val targetSoc = if (c.totalKwh > 0) minOf(100.0, round((c.targetSoc + gapKwh / cap * 100) * 10) / 10) else c.targetSoc
+        val targetSoc = nightTargetSoc(c, pattern, tTo * 12, gapSlots, cap)
         val reached = c.totalKwh <= 0 || soc >= targetSoc
         val (chargeUntil, control) = controlInverter(loc, existing, plant, targetSoc, reached, local, target, tTo)
         transaction {

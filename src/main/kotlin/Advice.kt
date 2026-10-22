@@ -253,8 +253,32 @@ fun buildReport(
         val b = battery ?: return@run null; val now = intraday?.now ?: return@run null
         val soc = batteryToday.lastOrNull { it.soc != null }?.soc ?: b.soc ?: return@run null
         val pattern = loadPatternFor(days, today, today, produced, load, loadHistory, kwp, ratio) ?: return@run null
-        val pv = DoubleArray(288) { i -> pvForecast.lastOrNull { slotOf(it.t) <= i }?.pvW ?: 0.0 }
-        estimateDay(slotOf(now), soc, b.batteryKwh, pattern, loc.reservedPct) { pv[it] }
+        // the next 12 hours, which run into tomorrow: its consumption pattern (weather) and panel forecast follow today's
+        val tomorrow = loadPatternFor(days, today.plusDays(1), today, produced, load, loadHistory, kwp, ratio) ?: pattern
+        val pv = DoubleArray(576) { i -> (if (i < 288) pvForecast else pvForecastNext).lastOrNull { slotOf(it.t) <= i % 288 }?.pvW ?: 0.0 }
+        val from = slotOf(now); val zone = ZoneId.of(loc.tz); val patterns = pattern + tomorrow
+        // the charge the night plan intends to do (management on): for the coming day zone, which is tomorrow's from the day zone's start on
+        val evening = from >= nightZone(today, zone).second * 12 // the day zone has started: the next one to plan for is tomorrow's
+        val planDay = if (evening) today.plusDays(1) else today
+        val stored = plans[planDay]
+        val (zFrom, zTo) = nightZone(planDay, zone)
+        val gap = (CHARGE_END_BEFORE_MS / 300_000).toInt()
+        val end = zTo * 12 - gap + if (evening) 288 else 0
+        val plain = if (loc.allowControl) estimateDay(from, soc, b.batteryKwh, patterns, loc.reservedPct, end) { pv[it] } else null
+        // the stored plan; without one (the planner acts once the battery is at its minimum) the plan the planner would make when the
+        // estimate says the battery gets there before the day zone
+        val target = if (plain == null) null else if (stored != null) stored.takeIf { !it.reached && it.totalKwh > 0 }?.targetSoc
+            else if (plain.points.none { it.soc <= loc.reservedPct + 1 }) null
+            else {
+                val offset = if (evening) 288 else 0
+                val c = compensation(patterns.copyOfRange(offset, offset + 288), { pv[offset + it] }, zTo * 12, zFrom * 12, b.batteryKwh, loc.reservedPct)
+                if (c.totalKwh > 0) nightTargetSoc(c, patterns.copyOfRange(offset, offset + 288), zTo * 12, gap, b.batteryKwh) else null
+            }
+        val charge = if (plain == null || target == null || target <= loc.reservedPct) null else {
+            val running = (stored?.chargeUntil ?: 0L) > System.currentTimeMillis()
+            plannedChargeStart(plain, from, end, b.batteryKwh, target, loc.maxChargeW.toDouble(), CHARGE_MARGIN, running)?.let { s -> PlannedCharge(s, end, loc.maxChargeW.toDouble(), target) }
+        }
+        estimateDay(from, soc, b.batteryKwh, patterns, loc.reservedPct, from + 144, charge) { pv[it] }
     }
     return Report(loc.id, loc.name, loc.solar, today.toString(), points, watering, battery, intraday, country = loc.country, estimate = estimate, nightFrom = nightZone(today, ZoneId.of(loc.tz)).first, nightTo = nightZone(today, ZoneId.of(loc.tz)).second,
         batteryToday = if (battery != null) batteryToday else emptyList(),

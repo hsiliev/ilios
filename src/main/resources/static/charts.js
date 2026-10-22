@@ -166,11 +166,12 @@ export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zon
   const hist=[...prev.map(p=>({...p,m:tmin(p.t,-1)})),...pts.map(p=>({...p,m:tmin(p.t,0)}))].filter(p=>inWin(p.m));
   const last=hist.length?hist[hist.length-1].m:nowMin(now);
   const future=[...fc.map(p=>({...p,m:tmin(p.t,0)})),...fcNext.map(p=>({...p,m:tmin(p.t,1)}))].filter(p=>p.m>last&&inWin(p.m)&&p.pvW>0);
-  // the server's 5-minute estimate (previous days' consumption pattern x today's weather x the solar forecast) runs to midnight; without
-  // consumption data there is no grid estimate
+  // the server's 5-minute estimate (previous days' consumption pattern x the weather x the solar forecast) runs 12 hours ahead, past midnight
+  // (its times wrap, so the day offset grows when a time is earlier than the one before); without consumption data there is no grid estimate
   const byServer=estimate?.points?.length>0,ew=byServer?1:3;
-  const ep=byServer?estimate.points.map(p=>({...p,m:tmin(p.t,0)})).filter(p=>p.m>last&&inWin(p.m)):[];
-  const est=ep.map(p=>({m:p.m,w:p.gridW}));
+  let eo=0,et='';
+  const ep=byServer?estimate.points.map(p=>{if(et&&p.t<et)eo++;et=p.t;return{...p,m:tmin(p.t,eo)}}).filter(p=>p.m>last&&inWin(p.m)):[];
+  const est=ep.map(p=>({m:p.m,w:p.gridW,c:p.chargeW||0}));
   const negKw=p=>p.gridW>0?p.gridW/1000:0; // below the axis: power drawn from the grid
   const maxKw=Math.max(0.5,...hist.map(p=>(p.pvW||0)/1000),...future.map(p=>p.pvW/1000))*1.1,kstep=stepFor(maxKw,ticks,[.5,1,2,5,10,20,50,100]);
   const maxD=Math.max(0,...hist.map(negKw),...est.map(p=>p.w/1000)),hasD=maxD>0;
@@ -196,8 +197,8 @@ export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zon
   hist.forEach(p=>{const v=negKw(p);if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.m)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});
   // pale bars: Open-Meteo's forecast (15-minute steps) for the next hours
   future.forEach(p=>{const bw=step*3*.9;o+=`<rect x="${L+step*at(p.m)+step*1.5-bw/2}" y="${yk(p.pvW/1000)}" width="${bw}" height="${midY-yk(p.pvW/1000)}" class="kfc"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*3}" height="${ih}" class="hit" data-tip="${hm(p.m)}|прогноза ${num(p.pvW/1000,2)} kW"/>`});
-  // pale red bars: the grid power the estimate expects (until midnight)
-  est.forEach(p=>{const v=p.w/1000,bw=step*ew*.9;if(v>0)o+=`<rect x="${L+step*at(p.m)+step*ew/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbatf"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*ew}" height="${ih}" class="hit" data-tip="${hm(p.m)}|очаквано от мрежата ${num(v,2)} kW"/>`});
+  // pale red bars: the grid power the estimate expects
+  est.forEach(p=>{const v=p.w/1000,bw=step*ew*.9;if(v>0)o+=`<rect x="${L+step*at(p.m)+step*ew/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbatf"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*ew}" height="${ih}" class="hit" data-tip="${hm(p.m)}|очаквано от мрежата ${num(v,2)} kW${p.c>0?'|в т.ч. планирано зареждане '+num(p.c/1000,2)+' kW':''}"/>`});
   // dashed line: the charge the estimate expects for the rest of the day
   if(ep.length)o+=`<polyline points="${ep.map(p=>(L+step*(at(p.m)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc" stroke-dasharray="5 4"/>`;
   const s=hist.filter(p=>p.soc!=null);
