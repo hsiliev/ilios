@@ -286,6 +286,7 @@ fun Application.module() {
                             if (loc.solar) solax.producedAc(loc.id) else emptyMap(),
                             if (loc.solar) solax.batteryDays(loc.id) else emptyMap(),
                             if (loc.solar) solax.today(loc.id, today) else emptyList(),
+                            if (loc.solar) solax.today(loc.id, today.minusDays(1)) else emptyList(),
                             if (loc.solar) solax.consumption(loc.id) else emptyMap(),
                             if (loc.solar) solax.dischargeProfile(loc.id, today) else emptyList(),
                             if (loc.solar) solax.loadDays(loc.id, today) else emptyList(),

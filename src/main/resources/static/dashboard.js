@@ -89,10 +89,10 @@ function reportCard(r,i,state){
     placeSummary(r),
     h('div',{cls:'pbody'},
     sec(r.id,'week','Седмични температури и валежи',...html(weatherChart(r.days,r.today))),
-    sec(r.id,'today','Времето днес',...(r.intraday?html(intraChart(r.intraday)):[h('p',{cls:'mut'},'Данните за деня се зареждат…')])),
+    sec(r.id,'today','Времето',...(r.intraday?html(intraChart(r.intraday)):[h('p',{cls:'mut'},'Данните за деня се зареждат…')])),
     ...(r.solar?[
       sec(r.id,'sun','Седмично слънце',...(b?html(powerChart(r.days,r.today,b.batteryKwh,r.estimate)):[noSolar])),
-      ...(b?[sec(r.id,'battery','Батерия днес',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.dischargeProfile||[],b,r.estimate,[r.nightFrom,r.nightTo])):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
+      ...(b?[sec(r.id,'battery','Батерия',...(r.batteryToday?.length||r.batteryPrev?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.dischargeProfile||[],b,r.estimate,[r.nightFrom,r.nightTo],r.batteryPrev||[],r.pvForecastNext||[])):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
     recommendations(r)));
 }
 

@@ -52,29 +52,35 @@ export function weatherChart(days,today){
   return legend([[sw('l','background:var(--cmax)'),'Дневен максимум (°C)'],[sw('l','background:var(--cmin)'),'Дневен минимум (°C)'],[sw('b','background:var(--crain)'),'Валеж (мм)']])+shell(W,H,'Температури и валежи за три седмици',o);
 }
 
+// both day charts show 24 hours with the current time in the middle: 12 hours back, 12 ahead (yesterday, today and tomorrow are stitched together)
+const nowMin=now=>+now.slice(0,2)*60+ +now.slice(3,5),tmin=(t,off)=>off*1440+ +t.slice(0,2)*60+ +t.slice(3,5);
+const hm=m=>{m=(m%1440+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')};
+const winStart=now=>Math.floor(nowMin(now)/5)*5-720;
+
 export function intraChart(it){
-  const W=900,H=330,L=48,R=48,T=60,B=34,iw=W-L-R,ih=H-T-B,pts=it.points,n=pts.length,step=iw/n;
-  const sc=tempScale(pts.map(p=>p.temp).filter(v=>v!=null),1);
-  const maxRain=Math.max(0,...pts.map(p=>p.rainMm));
+  const W=900,H=330,L=48,R=48,T=60,B=34,iw=W-L-R,ih=H-T-B,sm=it.stepMin,ws=winStart(it.now),X=m=>L+iw*(m-ws)/1440,bw0=iw*sm/1440;
+  const all=[...(it.prev||[]).map(p=>[p,-1]),...it.points.map(p=>[p,0]),...(it.next||[]).map(p=>[p,1])].map(([p,o])=>({...p,m:tmin(p.t,o)})).filter(p=>p.m>=ws&&p.m<ws+1440);
+  const sc=tempScale(all.map(p=>p.temp).filter(v=>v!=null),1);
+  const maxRain=Math.max(0,...all.map(p=>p.rainMm));
   const rstep=stepFor(maxRain*1.5,sc.ticks,[.1,.2,.5,1,2,5,10]);
-  const y=t=>T+ih-(t-sc.lo)/(sc.hi-sc.lo)*ih,yr=m=>T+ih-m/(rstep*sc.ticks)*ih,cx=i=>L+step*(i+.5),per=60/it.stepMin;
+  const y=t=>T+ih-(t-sc.lo)/(sc.hi-sc.lo)*ih,yr=m=>T+ih-m/(rstep*sc.ticks)*ih,cx=p=>X(p.m)+bw0/2;
   let o='';
   for(let k=0;k<=sc.ticks;k++){const yy=T+ih-k*ih/sc.ticks;
     o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${sc.lo+k*sc.tstep}°</text><text x="${L+iw+6}" y="${yy+4}" class="tx">${num(k*rstep,1)}</text>`}
-  o+=`<text transform="translate(12 ${T+ih/2}) rotate(-90)" class="tx" text-anchor="middle">Температура (°C)</text><text transform="translate(${W-8} ${T+ih/2}) rotate(90)" class="tx" text-anchor="middle">Валеж (мм/${it.stepMin} мин)</text>`;
-  for(let hr=0;hr<=24;hr+=3){const xx=L+step*hr*per;o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`}
-  pts.forEach((p,i)=>{if(p.rainMm>0){const bw=Math.max(step*.8,1.5);o+=`<rect x="${cx(i)-bw/2}" y="${yr(p.rainMm)}" width="${bw}" height="${T+ih-yr(p.rainMm)}" rx="1.5" class="rainbar"/>`}});
-  const ok=pts.map((p,i)=>[p,i]).filter(([p])=>p.temp!=null);
-  o+=`<polyline points="${ok.map(([p,i])=>cx(i)+','+y(p.temp)).join(' ')}" class="lmax"/>`;
-  // one event icon per hour: the most severe event in that hour
+  o+=`<text transform="translate(12 ${T+ih/2}) rotate(-90)" class="tx" text-anchor="middle">Температура (°C)</text><text transform="translate(${W-8} ${T+ih/2}) rotate(90)" class="tx" text-anchor="middle">Валеж (мм/${sm} мин)</text>`;
+  for(let m=Math.ceil(ws/180)*180;m<=ws+1440;m+=180){const xx=X(m);o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${hm(m)}</text>`}
+  all.forEach(p=>{if(p.rainMm>0){const bw=Math.max(bw0*.8,1.5);o+=`<rect x="${cx(p)-bw/2}" y="${yr(p.rainMm)}" width="${bw}" height="${T+ih-yr(p.rainMm)}" rx="1.5" class="rainbar"/>`}});
+  const ok=all.filter(p=>p.temp!=null);
+  o+=`<polyline points="${ok.map(p=>cx(p)+','+y(p.temp)).join(' ')}" class="lmax"/>`;
+  // one event icon per clock hour: the most severe event in that hour
   const rank=['thunder','snow','rain','wind','cloud'];
-  for(let hr=0;hr<24;hr++){const evs=pts.slice(hr*per,(hr+1)*per).map(p=>p.event).filter(Boolean);
-    const ev=rank.find(e=>evs.includes(e));if(ev)o+=evIcon(ev,L+step*(hr+.5)*per-9,T-34,18)}
-  const ni=pts.findIndex(p=>p.t>=it.now);
-  if(ni>=0)o+=`<line x1="${cx(ni)}" x2="${cx(ni)}" y1="${T}" y2="${T+ih}" class="now"/><text x="${cx(ni)+4}" y="${T+10}" class="tx b">сега ${it.now}</text>`;
-  pts.forEach((p,i)=>o+=`<rect x="${L+step*i}" y="${T-38}" width="${step}" height="${ih+38}" class="hit" data-tip="${p.t}|${num(p.temp)}°C|валеж ${num(p.rainMm,2)} мм${p.event?'|'+EVENTS[p.event]:''}"/>`);
-  const used=rank.filter(e=>pts.some(p=>p.event===e));
-  return legend([[sw('l','background:var(--cmax)'),'Температура (°C)'],[sw('b','background:var(--crain)'),`Валеж (мм/${it.stepMin} мин)`],...used.map(e=>[`<svg viewBox="0 0 24 24" class="ev ${e} lg">${ICONS[e]}</svg>`,EVENTS[e]])])+shell(W,H,'Времето днес',o);
+  for(let h=Math.ceil(ws/60);h*60+60<=ws+1440;h++){const evs=all.filter(p=>p.m>=h*60&&p.m<h*60+60).map(p=>p.event).filter(Boolean);
+    const ev=rank.find(e=>evs.includes(e));if(ev)o+=evIcon(ev,X(h*60+30)-9,T-34,18)}
+  const nx=X(nowMin(it.now));
+  o+=`<line x1="${nx}" x2="${nx}" y1="${T}" y2="${T+ih}" class="now"/><text x="${nx+4}" y="${T+10}" class="tx b">сега ${it.now}</text>`;
+  all.forEach(p=>o+=`<rect x="${X(p.m)}" y="${T-38}" width="${bw0}" height="${ih+38}" class="hit" data-tip="${hm(p.m)}|${num(p.temp)}°C|валеж ${num(p.rainMm,2)} мм${p.event?'|'+EVENTS[p.event]:''}"/>`);
+  const used=rank.filter(e=>all.some(p=>p.event===e));
+  return legend([[sw('l','background:var(--cmax)'),'Температура (°C)'],[sw('b','background:var(--crain)'),`Валеж (мм/${sm} мин)`],...used.map(e=>[`<svg viewBox="0 0 24 24" class="ev ${e} lg">${ICONS[e]}</svg>`,EVENTS[e]])])+shell(W,H,'Времето',o);
 }
 
 export function powerChart(days,today,cap,estimate=null){
@@ -149,46 +155,55 @@ document.addEventListener('pointermove',showCallout);
 document.addEventListener('pointerdown',showCallout);
 document.addEventListener('pointerleave',()=>{if(callout)callout.hidden=true});
 
-// today's battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes)
+// the battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes): the last 12 hours
+// (yesterday's points are kept for this), the current time in the middle, and the forecast and estimate for the next 12
 export const NIGHT_FROM=22,NIGHT_TO=6; // cheap night tariff hours (local time)
-export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zone=[NIGHT_FROM,NIGHT_TO]){
+export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zone=[NIGHT_FROM,NIGHT_TO],prev=[],fcNext=[]){
   const [NF,NT]=zone;
   const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,n=288,step=iw/n,ticks=5;
-  const last=pts.length?pts[pts.length-1].t:now,future=fc.filter(p=>p.t>last&&p.pvW>0);
-  // expected discharge for the rest of the day: the mean of the last days at that time, limited by what the battery can still give above its
-  // floor; the sun refills it in the steps where the forecast panel power exceeds that expected use
-  // the server's 5-minute estimate (previous days' consumption pattern x today's weather x the solar forecast) wins over the plain discharge mean
+  if(!now){const d=new Date();now=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+  const ws=winStart(now),inWin=m=>m>=ws&&m<ws+1440,at=m=>(m-ws)/5,X=m=>L+iw*(m-ws)/1440;
+  const hist=[...prev.map(p=>({...p,m:tmin(p.t,-1)})),...pts.map(p=>({...p,m:tmin(p.t,0)}))].filter(p=>inWin(p.m));
+  const last=hist.length?hist[hist.length-1].m:nowMin(now);
+  const future=[...fc.map(p=>({...p,m:tmin(p.t,0)})),...fcNext.map(p=>({...p,m:tmin(p.t,1)}))].filter(p=>p.m>last&&inWin(p.m)&&p.pvW>0);
+  // the server's 5-minute estimate (previous days' consumption pattern x today's weather x the solar forecast) runs to midnight; without
+  // consumption data there is no grid estimate
   const byServer=estimate?.points?.length>0,ew=byServer?1:3;
-  const est=byServer?estimate.points.filter(p=>p.t>last).map(p=>({t:p.t,w:p.gridW})):[]; // without consumption data there is no grid estimate
+  const ep=byServer?estimate.points.map(p=>({...p,m:tmin(p.t,0)})).filter(p=>p.m>last&&inWin(p.m)):[];
+  const est=ep.map(p=>({m:p.m,w:p.gridW}));
   const negKw=p=>p.gridW>0?p.gridW/1000:0; // below the axis: power drawn from the grid
-  const maxKw=Math.max(0.5,...pts.map(p=>(p.pvW||0)/1000),...future.map(p=>p.pvW/1000))*1.1,kstep=stepFor(maxKw,ticks,[.5,1,2,5,10,20,50,100]);
-  const maxD=Math.max(0,...pts.map(negKw),...est.map(p=>p.w/1000)),hasD=maxD>0;
+  const maxKw=Math.max(0.5,...hist.map(p=>(p.pvW||0)/1000),...future.map(p=>p.pvW/1000))*1.1,kstep=stepFor(maxKw,ticks,[.5,1,2,5,10,20,50,100]);
+  const maxD=Math.max(0,...hist.map(negKw),...est.map(p=>p.w/1000)),hasD=maxD>0;
   // the zone below the x axis (battery consumption) only exists when there is any discharge
   // both zones share one kW scale: the same number of pixels per kW above and below the axis
   const nneg=hasD?Math.ceil(maxD/kstep):0,ihT=ih*ticks/(ticks+nneg),ihB=ih-ihT,midY=T+ihT,dmax=nneg*kstep;
-  const yk=v=>midY-v/(kstep*ticks)*ihT,yp=p=>midY-p/100*ihT,yd=v=>midY+v/dmax*ihB,at=t=>{const[hh,mm]=t.split(':');return(+hh*60+ +mm)/5};
+  const yk=v=>midY-v/(kstep*ticks)*ihT,yp=p=>midY-p/100*ihT,yd=v=>midY+v/dmax*ihB;
   let o='';
   for(let k=0;k<=ticks;k++){const yy=midY-k*ihT/ticks;
     o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${num(k*kstep,kstep<1?1:0)}</text><text x="${L+iw+6}" y="${yy+4}" class="tx">${k*20}%</text>`}
   if(hasD){for(let k=1;k<=nneg;k++){const yy=yd(k*kstep);o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">-${num(k*kstep,kstep<1?1:0)}</text>`}
     o+=`<text transform="translate(12 ${midY+ihB/2}) rotate(-90)" class="tx" text-anchor="middle">Мрежа (kW)</text>`}
   o+=`<text transform="translate(12 ${T+ihT/2}) rotate(-90)" class="tx" text-anchor="middle">Мощност на панелите (kW)</text><text transform="translate(${W-8} ${T+ihT/2}) rotate(90)" class="tx" text-anchor="middle">Заряд на батерията (%)</text>`;
-  // tariff zones: night (NF-NT, cheap energy) is shaded, the day zone starts when it ends
-  const nx=hr=>L+step*hr*12;
-  o+=`<rect x="${nx(0)}" y="${T}" width="${nx(NT)-nx(0)}" height="${ih}" class="nightz"/><rect x="${nx(NF)}" y="${T}" width="${nx(24)-nx(NF)}" height="${ih}" class="nightz"/>`
-    +`<text x="${nx(NT/2)}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text><text x="${(nx(NF)+nx(24))/2}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text>`
-    +`<line x1="${nx(NT)}" x2="${nx(NT)}" y1="${T}" y2="${T+ih}" class="sep"/><text x="${nx(NT)+4}" y="${T+12}" class="tx">дневна енергия →</text>`;
-  for(let hr=0;hr<=24;hr+=3){const xx=L+step*hr*12;o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${String(hr%24).padStart(2,'0')}:00</text>`}
-  pts.forEach(p=>{const v=(p.pvW||0)/1000;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${yk(v)}" width="${bw}" height="${midY-yk(v)}" class="kprod"/>`}});
-  pts.forEach(p=>{const v=negKw(p);if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.t)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});
-  // pale bars: Open-Meteo's forecast (15-minute steps) for the rest of the day
-  future.forEach(p=>{const bw=step*3*.9;o+=`<rect x="${L+step*at(p.t)+step*1.5-bw/2}" y="${yk(p.pvW/1000)}" width="${bw}" height="${midY-yk(p.pvW/1000)}" class="kfc"/><rect x="${L+step*at(p.t)}" y="${T}" width="${step*3}" height="${ih}" class="hit" data-tip="${p.t}|прогноза ${num(p.pvW/1000,2)} kW"/>`});
-  // pale red bars: the mean battery discharge of the last days at that time (15-minute steps) for the rest of the day
-  est.forEach(p=>{const v=p.w/1000,bw=step*ew*.9;if(v>0)o+=`<rect x="${L+step*at(p.t)+step*ew/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbatf"/><rect x="${L+step*at(p.t)}" y="${T}" width="${step*ew}" height="${ih}" class="hit" data-tip="${p.t}|очаквано от мрежата ${num(v,2)} kW"/>`});
+  // tariff zones: night (NF-NT, cheap energy) is shaded, the day zone starts when it ends; yesterday's, today's and tomorrow's zones are cut to the window
+  for(const d of [-1,0,1]){
+    for(const [a,b] of [[d*1440,d*1440+NT*60],[d*1440+NF*60,d*1440+1440]]){
+      const x1=X(Math.max(a,ws)),x2=X(Math.min(b,ws+1440));
+      if(x2-x1>0)o+=`<rect x="${x1}" y="${T}" width="${x2-x1}" height="${ih}" class="nightz"/>`+(x2-x1>90?`<text x="${(x1+x2)/2}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text>`:'')}
+    const dz=d*1440+NT*60;
+    if(inWin(dz))o+=`<line x1="${X(dz)}" x2="${X(dz)}" y1="${T}" y2="${T+ih}" class="sep"/><text x="${X(dz)+4}" y="${T+12}" class="tx">дневна енергия →</text>`}
+  for(let m=Math.ceil(ws/180)*180;m<=ws+1440;m+=180){const xx=X(m);o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${hm(m)}</text>`}
+  hist.forEach(p=>{const v=(p.pvW||0)/1000;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.m)+step/2-bw/2}" y="${yk(v)}" width="${bw}" height="${midY-yk(v)}" class="kprod"/>`}});
+  hist.forEach(p=>{const v=negKw(p);if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.m)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});
+  // pale bars: Open-Meteo's forecast (15-minute steps) for the next hours
+  future.forEach(p=>{const bw=step*3*.9;o+=`<rect x="${L+step*at(p.m)+step*1.5-bw/2}" y="${yk(p.pvW/1000)}" width="${bw}" height="${midY-yk(p.pvW/1000)}" class="kfc"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*3}" height="${ih}" class="hit" data-tip="${hm(p.m)}|прогноза ${num(p.pvW/1000,2)} kW"/>`});
+  // pale red bars: the grid power the estimate expects (until midnight)
+  est.forEach(p=>{const v=p.w/1000,bw=step*ew*.9;if(v>0)o+=`<rect x="${L+step*at(p.m)+step*ew/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbatf"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*ew}" height="${ih}" class="hit" data-tip="${hm(p.m)}|очаквано от мрежата ${num(v,2)} kW"/>`});
   // dashed line: the charge the estimate expects for the rest of the day
-  if(byServer){const e=estimate.points.filter(p=>p.t>last);if(e.length)o+=`<polyline points="${e.map(p=>(L+step*(at(p.t)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc" stroke-dasharray="5 4"/>`}
-  const s=pts.filter(p=>p.soc!=null);
-  if(s.length)o+=`<polyline points="${s.map(p=>(L+step*(at(p.t)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc"/>`;
-  pts.forEach(p=>o+=`<rect x="${L+step*at(p.t)}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${p.t}${p.pvW!=null?'|панели '+num(p.pvW/1000,2)+' kW':''}${p.gridW>0?'|от мрежата '+num(p.gridW/1000,2)+' kW':''}${p.soc!=null?'|батерия '+num(p.soc,0)+'%':''}"/>`);
-  return legend([[sw('l','background:var(--cbat)'),'Заряд на батерията (%)'],[sw('b','background:var(--kprod)'),'Мощност на панелите (kW)'],[sw('b','background:var(--kbat)'),'Изтеглено от мрежата (kW)']])+shell(W,H,'Батерия днес',o);
+  if(ep.length)o+=`<polyline points="${ep.map(p=>(L+step*(at(p.m)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc" stroke-dasharray="5 4"/>`;
+  const s=hist.filter(p=>p.soc!=null);
+  if(s.length)o+=`<polyline points="${s.map(p=>(L+step*(at(p.m)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc"/>`;
+  const nx=X(nowMin(now));
+  o+=`<line x1="${nx}" x2="${nx}" y1="${T}" y2="${T+ih}" class="now"/><text x="${nx+4}" y="${T+ih-6}" class="tx b">сега ${now}</text>`;
+  hist.forEach(p=>o+=`<rect x="${L+step*at(p.m)}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${hm(p.m)}${p.pvW!=null?'|панели '+num(p.pvW/1000,2)+' kW':''}${p.gridW>0?'|от мрежата '+num(p.gridW/1000,2)+' kW':''}${p.soc!=null?'|батерия '+num(p.soc,0)+'%':''}"/>`);
+  return legend([[sw('l','background:var(--cbat)'),'Заряд на батерията (%)'],[sw('b','background:var(--kprod)'),'Мощност на панелите (kW)'],[sw('b','background:var(--kbat)'),'Изтеглено от мрежата (kW)']])+shell(W,H,'Батерия',o);
 }

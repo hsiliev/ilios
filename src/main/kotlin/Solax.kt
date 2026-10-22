@@ -33,6 +33,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
@@ -607,7 +608,8 @@ class SolaxService(private val http: HttpClient, private val baseUrl: String = s
             val slots = (soc.keys + pv.keys + bat.keys + grid.keys).sorted()
             if (slots.isEmpty()) return
             transaction {
-                SolarToday.deleteWhere { SolarToday.locationId eq loc.id }
+                // yesterday's points stay for the 24-hour window; today's are replaced and older ones dropped
+                SolarToday.deleteWhere { (SolarToday.locationId eq loc.id) and ((SolarToday.day eq day.toString()) or (SolarToday.day less day.minusDays(1).toString())) }
                 SolarToday.batchInsert(slots) { t ->
                     this[SolarToday.locationId] = loc.id; this[SolarToday.day] = day.toString(); this[SolarToday.t] = t
                     this[SolarToday.soc] = soc[t]?.average(); this[SolarToday.pvW] = pv[t]?.sum() // several inverters add up

@@ -18,6 +18,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.max
@@ -135,15 +137,17 @@ class WeatherService(
         }.sortedBy { it.date }
     }
 
-    /** Today's 15-minute steps, or null if none are stored. */
+    private fun steps(loc: Loc, day: LocalDate): List<IntraPoint> = transaction {
+        Intraday15.selectAll().where { (Intraday15.locationId eq loc.id) and (Intraday15.day eq day.toString()) }
+            .orderBy(Intraday15.t).map { IntraPoint(it[Intraday15.t], it[Intraday15.temp], it[Intraday15.rainMm], it[Intraday15.event], it[Intraday15.radiationWm2]) }
+    }
+
+    /** Today's 15-minute steps (and yesterday's and tomorrow's, for the 24-hour window), or null if none are stored for today. */
     fun intraday(loc: Loc, today: LocalDate): Intraday? {
-        val points = transaction {
-            Intraday15.selectAll().where { (Intraday15.locationId eq loc.id) and (Intraday15.day eq today.toString()) }
-                .orderBy(Intraday15.t).map { IntraPoint(it[Intraday15.t], it[Intraday15.temp], it[Intraday15.rainMm], it[Intraday15.event], it[Intraday15.radiationWm2]) }
-        }
+        val points = steps(loc, today)
         if (points.isEmpty()) return null
         val now = ZonedDateTime.now(ZoneId.of(loc.tz)).toLocalTime().withSecond(0).withNano(0)
-        return Intraday(now.toString(), 15, points)
+        return Intraday(now.toString(), 15, points, steps(loc, today.minusDays(1)), steps(loc, today.plusDays(1)))
     }
 
     // ---- refresh (the only code that talks to the forecast API) ----
@@ -233,7 +237,9 @@ class WeatherService(
         }.body<IntraResp>()
         val m = r.m
         transaction {
-            Intraday15.deleteWhere { locationId eq loc.id }
+            // yesterday's rows stay (the 24-hour window looks back), the fetched days are replaced and older ones dropped
+            val first = m.time.firstOrNull()?.substringBefore('T') ?: return@transaction
+            Intraday15.deleteWhere { (locationId eq loc.id) and ((day greaterEq first) or (day less LocalDate.parse(first).minusDays(1).toString())) }
             Intraday15.batchInsert(m.time.indices) { i ->
                 val code = m.code.getOrNull(i) ?: 0
                 this[Intraday15.locationId] = loc.id
