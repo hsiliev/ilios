@@ -52,13 +52,13 @@ export function weatherChart(days,today){
   return legend([[sw('l','background:var(--cmax)'),'Дневен максимум (°C)'],[sw('l','background:var(--cmin)'),'Дневен минимум (°C)'],[sw('b','background:var(--crain)'),'Валеж (мм)']])+shell(W,H,'Температури и валежи за три седмици',o);
 }
 
-// both day charts show 24 hours with the current time in the middle: 12 hours back, 12 ahead (yesterday, today and tomorrow are stitched together)
+// the battery chart shows 24 hours with the current time in the middle (12 back, 12 ahead), the weather chart 3 back and 21 ahead (yesterday, today and tomorrow are stitched together)
 const nowMin=now=>+now.slice(0,2)*60+ +now.slice(3,5),tmin=(t,off)=>off*1440+ +t.slice(0,2)*60+ +t.slice(3,5);
 const hm=m=>{m=(m%1440+1440)%1440;return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')};
-const winStart=now=>Math.floor(nowMin(now)/5)*5-720;
+const winStart=(now,back=720)=>Math.floor(nowMin(now)/5)*5-back;
 
 export function intraChart(it){
-  const W=900,H=330,L=48,R=48,T=60,B=34,iw=W-L-R,ih=H-T-B,sm=it.stepMin,ws=winStart(it.now),X=m=>L+iw*(m-ws)/1440,bw0=iw*sm/1440;
+  const W=900,H=330,L=48,R=48,T=60,B=34,iw=W-L-R,ih=H-T-B,sm=it.stepMin,ws=winStart(it.now,180),X=m=>L+iw*(m-ws)/1440,bw0=iw*sm/1440;
   const all=[...(it.prev||[]).map(p=>[p,-1]),...it.points.map(p=>[p,0]),...(it.next||[]).map(p=>[p,1])].map(([p,o])=>({...p,m:tmin(p.t,o)})).filter(p=>p.m>=ws&&p.m<ws+1440);
   const sc=tempScale(all.map(p=>p.temp).filter(v=>v!=null),1);
   const maxRain=Math.max(0,...all.map(p=>p.rainMm));
