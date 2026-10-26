@@ -69,7 +69,8 @@ function recommendations(r){
 function nightLine(r){
   const n=r.night,plan=r.days.filter(d=>d.plan&&d.date>=r.today).map(d=>d.plan)[0],m=r.missed;
   const eur=v=>v.toLocaleString('bg-BG',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
-  const kwh=plan?plan.totalKwh:n&&n.charge?n.kwh:0;
+  const b=r.battery,room=b&&b.soc!=null&&b.batteryKwh>0?b.batteryKwh*(1-Math.min(100,Math.max(0,b.soc))/100):Infinity;
+  const kwh=Math.min(plan?plan.totalKwh:n&&n.charge?n.kwh:0,room); // the battery cannot take more than its free room
   if(!plan&&!n)return null;
   let text='Тази нощ не е нужно зареждане – слънцето покрива консумацията',charge=false;
   if(kwh>0){
