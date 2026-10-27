@@ -1,5 +1,13 @@
 package ilios
 
+import ilios.auth.Mailer
+import ilios.db.Daily
+import ilios.db.Intraday15
+import ilios.db.Locations
+import ilios.db.Users
+import ilios.db.initDb
+import ilios.solax.api.OK
+import ilios.web.userId
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.request.delete
@@ -20,7 +28,6 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
-import java.nio.file.Files
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,28 +45,50 @@ class AppTest {
 
     private fun ApplicationTestBuilder.client() = createClient { install(HttpCookies) }
 
-    private suspend fun HttpClient.json(path: String, body: String) =
-        post("/api$path") { contentType(ContentType.Application.Json); setBody(body) }
+    private suspend fun HttpClient.json(path: String, body: String) = post("/api$path") {
+        contentType(ContentType.Application.Json)
+        setBody(body)
+    }
 
-    private suspend fun HttpClient.register(email: String) = json("/register", """{"email":"$email","password":"password1"}""")
+    private suspend fun HttpClient.register(email: String) =
+        json("/register", """{"email":"$email","password":"password1"}""")
 
-    private fun userId(email: String) = transaction { Users.selectAll().where { Users.email eq email }.single()[Users.id] }
+    private fun userId(email: String) = transaction {
+        Users.selectAll().where { Users.email eq email }.single()[Users.id]
+    }
 
     /** Inserts a place with fresh weather rows directly, so nothing calls Open-Meteo. */
     private fun place(owner: Long, name: String): Long {
         val id = transaction {
             Locations.insert {
-                it[userId] = owner; it[Locations.name] = name; it[lat] = 42.7; it[lon] = 23.3; it[tz] = "UTC"
+                it[userId] = owner
+                it[Locations.name] = name
+                it[lat] = 42.7
+                it[lon] = 23.3
+                it[tz] = "UTC"
             }[Locations.id]
         }
         val today = LocalDate.now(java.time.ZoneId.of("UTC"))
         transaction {
-            for (offset in -14L..13L) Daily.insert {
-                it[locationId] = id; it[day] = today.plusDays(offset).toString()
-                it[tMax] = 20.0; it[tMin] = 10.0; it[rainMm] = 1.0; it[radiationMj] = 10.0; it[fetchedAt] = System.currentTimeMillis()
+            for (offset in -14L..13L) {
+                Daily.insert {
+                    it[locationId] = id
+                    it[day] = today.plusDays(offset).toString()
+                    it[tMax] = 20.0
+                    it[tMin] = 10.0
+                    it[rainMm] = 1.0
+                    it[radiationMj] = 10.0
+                    it[fetchedAt] = System.currentTimeMillis()
+                }
             }
-            for (t in listOf("00:00", "00:15", "00:30")) Intraday15.insert {
-                it[locationId] = id; it[day] = today.toString(); it[Intraday15.t] = t; it[temp] = 12.0; it[rainMm] = 0.0
+            for (t in listOf("00:00", "00:15", "00:30")) {
+                Intraday15.insert {
+                    it[locationId] = id
+                    it[day] = today.toString()
+                    it[Intraday15.t] = t
+                    it[temp] = 12.0
+                    it[rainMm] = 0.0
+                }
             }
         }
         return id
@@ -77,8 +106,14 @@ class AppTest {
         assertEquals(HttpStatusCode.OK, c.get("/api/me").status)
         assertEquals(HttpStatusCode.BadRequest, c.register("a@example.com").status) // duplicate
         val other = client()
-        assertEquals(HttpStatusCode.Unauthorized, other.json("/login", """{"email":"a@example.com","password":"nope"}""").status)
-        assertEquals(HttpStatusCode.OK, other.json("/login", """{"email":"a@example.com","password":"password1"}""").status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            other.json("/login", """{"email":"a@example.com","password":"nope"}""").status,
+        )
+        assertEquals(
+            HttpStatusCode.OK,
+            other.json("/login", """{"email":"a@example.com","password":"password1"}""").status,
+        )
     }
 
     @Test
@@ -98,8 +133,8 @@ class AppTest {
 
     @Test
     fun cannotDeleteSomeoneElsesPlace() = app {
-        val owner = client().also { it.register("owner@example.com") }
-        val intruder = client().also { it.register("intruder@example.com") }
+        val owner = client().apply { register("owner@example.com") }
+        val intruder = client().apply { register("intruder@example.com") }
         val id = place(userId("owner@example.com"), "Mine")
 
         intruder.delete("/api/locations/$id")
@@ -118,6 +153,18 @@ class AppTest {
         val report = Json.parseToJsonElement(c.get("/api/report").bodyAsText()).jsonArray.single().jsonObject
         assertEquals(21, report["days"]!!.jsonArray.size)
         assertEquals(3, report["intraday"]!!.jsonObject["points"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun reportAlwaysCarriesTheNightZone() = app {
+        val c = client()
+        c.register("z@example.com")
+        place(userId("z@example.com"), "Sofia")
+
+        val report = Json.parseToJsonElement(c.get("/api/report").bodyAsText()).jsonArray.single().jsonObject
+        val from = report["nightFrom"]!!.toString().toInt()
+        val to = report["nightTo"]!!.toString().toInt()
+        assertEquals(true, from to to in listOf(22 to 6, 23 to 7))
     }
 
     @Test
@@ -144,18 +191,27 @@ class AppTest {
         val c = client()
         c.register("a@example.com")
         val uid = userId("a@example.com")
-        val a = place(uid, "A"); val b = place(uid, "B"); val d = place(uid, "D")
-        fun names() = Json.parseToJsonElement(kotlinx.coroutines.runBlocking { c.get("/api/locations").bodyAsText() }).jsonArray.map { it.jsonObject["name"].toString().trim('"') }
+        val a = place(uid, "A")
+        val b = place(uid, "B")
+        val d = place(uid, "D")
+        fun names() = Json.parseToJsonElement(
+            kotlinx.coroutines.runBlocking {
+                c.get("/api/locations").bodyAsText()
+            },
+        ).jsonArray.map { it.jsonObject["name"].toString().trim('"') }
         assertEquals(listOf("A", "B", "D"), names())
 
-        suspend fun order(vararg ids: Long) = c.put("/api/locations/order") { contentType(ContentType.Application.Json); setBody("""{"ids":[${ids.joinToString(",")}]}""") }.status
+        suspend fun order(vararg ids: Long) = c.put("/api/locations/order") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"ids":[${ids.joinToString(",")}]}""")
+        }.status
         assertEquals(HttpStatusCode.OK, order(d, a, b))
         assertEquals(listOf("D", "A", "B"), names())
         assertEquals(HttpStatusCode.BadRequest, order(d, a)) // not every place
         assertEquals(HttpStatusCode.BadRequest, order(d, a, b, 999)) // someone else's or unknown place
         assertEquals(listOf("D", "A", "B"), names())
 
-        val other = client().also { it.register("b@example.com") }
+        val other = client().apply { register("b@example.com") }
         val foreign = place(userId("b@example.com"), "X")
         assertEquals(HttpStatusCode.BadRequest, order(d, a, foreign))
     }

@@ -1,5 +1,8 @@
-package ilios
+@file:Suppress("StringLiteralDuplication") // repeated property and column names read better than constants
 
+package ilios.auth
+
+import ilios.MAX_PORT
 import jakarta.mail.Authenticator
 import jakarta.mail.Message
 import jakarta.mail.PasswordAuthentication
@@ -15,7 +18,8 @@ import java.util.Properties
 fun mailPortFrom(value: String?): Int {
     val v = value?.trim().orEmpty()
     if (v.isEmpty()) return 587
-    return v.toIntOrNull()?.takeIf { it in 1..65535 } ?: error("MAIL_PORT must be a number between 1 and 65535, got '$v'")
+    return v.toIntOrNull()?.takeIf { it in 1..MAX_PORT }
+        ?: error("MAIL_PORT must be a number between 1 and 65535, got '$v'")
 }
 
 /**
@@ -32,16 +36,26 @@ class Mailer(
     /** Without both settings mail is disabled and reset links go to the server log. */
     val enabled = user.isNotEmpty() && password.isNotEmpty()
 
-    private val session: Session? = if (!enabled) null else {
+    private val session: Session? = if (!enabled) {
+        null
+    } else {
         val props = Properties().apply {
-            put("mail.smtp.host", host); put("mail.smtp.port", port.toString())
-            put("mail.smtp.connectiontimeout", "10000"); put("mail.smtp.timeout", "10000"); put("mail.smtp.writetimeout", "10000")
-            put("mail.smtp.starttls.enable", "true"); put("mail.smtp.starttls.required", "true")
-            put("mail.smtp.ssl.checkserveridentity", "true"); put("mail.smtp.auth", "true")
+            put("mail.smtp.host", host)
+            put("mail.smtp.port", port.toString())
+            put("mail.smtp.connectiontimeout", "10000")
+            put("mail.smtp.timeout", "10000")
+            put("mail.smtp.writetimeout", "10000")
+            put("mail.smtp.starttls.enable", "true")
+            put("mail.smtp.starttls.required", "true")
+            put("mail.smtp.ssl.checkserveridentity", "true")
+            put("mail.smtp.auth", "true")
         }
-        Session.getInstance(props, object : Authenticator() {
-            override fun getPasswordAuthentication() = PasswordAuthentication(user, password)
-        })
+        Session.getInstance(
+            props,
+            object : Authenticator() {
+                override fun getPasswordAuthentication() = PasswordAuthentication(user, password)
+            },
+        )
     }
 
     suspend fun send(to: String, subject: String, body: String) {
@@ -50,9 +64,11 @@ class Mailer(
             val m = MimeMessage(s).apply {
                 setFrom(InternetAddress(user))
                 setRecipient(Message.RecipientType.TO, InternetAddress(to))
-                setSubject(subject, "UTF-8"); setText(body, "UTF-8")
+                setSubject(subject, "UTF-8")
+                setText(body, "UTF-8")
             }
-            m.saveChanges(); Transport.send(m, m.allRecipients)
+            m.saveChanges()
+            Transport.send(m, m.allRecipients)
         }
     }
 }

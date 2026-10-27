@@ -1,0 +1,29 @@
+# Every detekt rule is on (allRules in build.gradle.kts); the exceptions below are deliberate.
+style:
+  ReturnCount:
+    max: 6
+    excludeGuardClauses: true
+naming:
+  InvalidPackageDeclaration:
+    rootPackage: 'ilios' # directories omit the root package (Kotlin coding conventions)
+  FunctionNameMaxLength:
+    excludes: ['**/test/**'] # test names state the behaviour under test
+exceptions:
+  TooGenericExceptionCaught:
+    active: false # background loops and best-effort steps deliberately catch Exception so one failure never stops them
+complexity:
+  LabeledExpression:
+    active: false # return@lock and return@withLock are the idiom inside the coroutine lock helpers
+  TooManyFunctions:
+    allowedFunctionsPerClass: 15 # facades such as SolaxService delegate to small collaborators
+comments:
+  UndocumentedPublicClass:
+    active: false # comments explain the non-obvious; the code is not documented line by line
+  UndocumentedPublicFunction:
+    active: false # same
+  UndocumentedPublicProperty:
+    active: false # same (DTO and table columns are self-explanatory)
+  DocumentationOverPrivateFunction:
+    active: false # a comment on a private function says why, not what
+  DocumentationOverPrivateProperty:
+    active: false # same

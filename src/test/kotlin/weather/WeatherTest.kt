@@ -1,5 +1,14 @@
-package ilios
+package ilios.weather
 
+import ilios.db.Daily
+import ilios.db.Loc
+import ilios.db.Locations
+import ilios.db.Users
+import ilios.db.initDb
+import ilios.db.locOf
+import ilios.solax.api.OK
+import ilios.tempDbPath
+import ilios.web.userId
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -28,6 +37,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** Open-Meteo calls against a fake server: what is asked for, and what is served from the database instead. */
+@Suppress("ClassOrdering") // the canned replies sit next to the helper that uses them
 class WeatherTest {
     private val today = LocalDate.now(ZoneId.of("UTC"))
 
@@ -35,7 +45,11 @@ class WeatherTest {
         val seen = mutableListOf<HttpRequestData>()
         val engine = MockEngine { req ->
             seen += req
-            respond(handler(req), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+            respond(
+                handler(req),
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
         }
         val client = HttpClient(engine) {
             expectSuccess = true
@@ -48,22 +62,35 @@ class WeatherTest {
     private fun forecast(req: HttpRequestData): String {
         val p = req.url.parameters
         if (p["minutely_15"] != null) {
-            return """{"timezone":"UTC","minutely_15":{"time":["${today}T00:00","${today}T00:15"],"temperature_2m":[10.0,10.5],
-                "precipitation":[0.0,0.0],"weather_code":[0,0],"cloud_cover":[10,10],"wind_speed_10m":[5,5],"wind_gusts_10m":[8,8]}}"""
+            return """
+                {"timezone":"UTC","minutely_15":{"time":["${today}T00:00","${today}T00:15"],"temperature_2m":[10.0,10.5],
+                "precipitation":[0.0,0.0],"weather_code":[0,0],"cloud_cover":[10,10],"wind_speed_10m":[5,5],"wind_gusts_10m":[8,8]}}
+            """.trimIndent()
         }
         val past = p["past_days"]?.toLong() ?: 0L
         val days = (-past until p["forecast_days"]!!.toLong()).map { today.plusDays(it) }
         fun list(v: String) = days.joinToString(",") { v }
-        return """{"timezone":"UTC","daily":{"time":[${days.joinToString(",") { "\"$it\"" }}],
+        return """
+            {"timezone":"UTC","daily":{"time":[${days.joinToString(",") { "\"$it\"" }}],
             "temperature_2m_max":[${list("20.0")}],"temperature_2m_min":[${list("10.0")}],
-            "precipitation_sum":[${list("1.0")}],"shortwave_radiation_sum":[${list("12.0")}]}}"""
+            "precipitation_sum":[${list("1.0")}],"shortwave_radiation_sum":[${list("12.0")}]}}
+        """.trimIndent()
     }
 
     private fun place(): Loc {
         initDb(tempDbPath())
         val id = transaction {
-            val user = Users.insert { it[email] = "a@example.com"; it[passHash] = "x" }[Users.id]
-            Locations.insert { it[userId] = user; it[name] = "Sofia"; it[lat] = 42.7; it[lon] = 23.3; it[tz] = "UTC" }[Locations.id]
+            val user = Users.insert {
+                it[email] = "a@example.com"
+                it[passHash] = "x"
+            }[Users.id]
+            Locations.insert {
+                it[userId] = user
+                it[name] = "Sofia"
+                it[lat] = 42.7
+                it[lon] = 23.3
+                it[tz] = "UTC"
+            }[Locations.id]
         }
         return locOf(transaction { Locations.selectAll().where { Locations.id eq id }.single() })
     }
@@ -83,10 +110,15 @@ class WeatherTest {
         assertTrue(today.plusDays(13) in stored)
 
         svc.refresh(loc)
-        assertNull(daily(seen)[1].url.parameters["past_days"], "everything past is stored already, so only today and the future are asked for")
+        assertNull(
+            daily(seen)[1].url.parameters["past_days"],
+            "everything past is stored already, so only today and the future are asked for",
+        )
 
         // a gap appears (say, the app was off): exactly the missing days are asked for again
-        transaction { Daily.deleteWhere { (Daily.locationId eq loc.id) and (Daily.day eq today.minusDays(1).toString()) } }
+        transaction {
+            Daily.deleteWhere { Daily.locationId eq loc.id and (Daily.day eq today.minusDays(1).toString()) }
+        }
         svc.refresh(loc)
         assertEquals("1", daily(seen)[2].url.parameters["past_days"])
         assertTrue(today.minusDays(1) in svc.days(loc).map { it.date })
@@ -98,14 +130,20 @@ class WeatherTest {
         val (svc, _) = service(::forecast)
         svc.refresh(loc)
         val old = today.minusDays(2)
-        transaction { Daily.update({ (Daily.locationId eq loc.id) and (Daily.day eq old.toString()) }) { it[Daily.tMax] = 99.0 } }
+        transaction {
+            Daily.update({ Daily.locationId eq loc.id and (Daily.day eq old.toString()) }) {
+                it[Daily.tMax] =
+                    99.0
+            }
+        }
 
         svc.refresh(loc)
 
         assertEquals(99.0, svc.days(loc).single { it.date == old }.tMax)
     }
 
-    private val hits = """{"results":[{"name":"София","latitude":42.7,"longitude":23.3,"country":"България","admin1":"София-град","timezone":"Europe/Sofia"}]}"""
+    private val hits =
+        """{"results":[{"name":"София","latitude":42.7,"longitude":23.3,"country":"България","admin1":"София-град","timezone":"Europe/Sofia"}]}"""
 
     @Test
     fun aRepeatedPlaceSearchIsAnsweredFromTheDatabase() = runBlocking {
@@ -132,5 +170,16 @@ class WeatherTest {
         reply = hits
         assertTrue(svc.geocode("xyzzy", now.plusSeconds(31L * 24 * 3600)).isNotEmpty())
         assertEquals(2, seen.size, "after a month the search is made again")
+    }
+
+    @Test
+    fun weatherEventsAreRankedThunderSnowRainWindCloud() {
+        assertEquals("thunder", eventOf(96, 0.0, 0.0, 0.0))
+        assertEquals("snow", eventOf(73, 60.0, 0.0, 100.0))
+        assertEquals("rain", eventOf(61, 0.0, 0.0, 0.0))
+        assertEquals("wind", eventOf(0, 55.0, 0.0, 0.0))
+        assertEquals("wind", eventOf(0, 0.0, 30.0, 0.0))
+        assertEquals("cloud", eventOf(3, 0.0, 0.0, 75.0))
+        assertNull(eventOf(0, 0.0, 0.0, 10.0))
     }
 }

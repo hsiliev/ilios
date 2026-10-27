@@ -1,5 +1,19 @@
-package ilios
+package ilios.report
 
+import ilios.db.DEFAULT_MAX_CHARGE_W
+import ilios.db.Loc
+import ilios.db.Locations
+import ilios.db.Solax
+import ilios.db.Users
+import ilios.db.initDb
+import ilios.db.locOf
+import ilios.solax.SolaxConnection
+import ilios.solax.SolaxPlant
+import ilios.solax.SolaxService
+import ilios.solax.api.OK
+import ilios.solax.api.SolaxError
+import ilios.tempDbPath
+import ilios.web.userId
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -13,7 +27,6 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -31,6 +44,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /** Inverter control (remote-mode charging) against a fake SolaX server whose answers copy the real API's shapes. */
+@Suppress("ClassOrdering") // the fixtures sit next to the tests that use them
 class ControlTest {
     private val zone = ZoneId.of("Europe/Sofia")
     private val token = """{"code":0,"result":{"access_token":"tok-1","expires_in":2591999}}"""
@@ -39,7 +53,11 @@ class ControlTest {
         val seen = mutableListOf<HttpRequestData>()
         val engine = MockEngine { req ->
             seen += req
-            respond(handler(req), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+            respond(
+                handler(req),
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
         }
         val client = HttpClient(engine) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
         return SolaxService(client, "https://solax.test") to seen
@@ -49,20 +67,39 @@ class ControlTest {
     private fun place(maxChargeW: Int = DEFAULT_MAX_CHARGE_W, reservedPct: Int = 10): Loc {
         initDb(tempDbPath())
         val id = transaction {
-            val user = Users.insert { it[email] = "a@example.com"; it[passHash] = "x" }[Users.id]
+            val user = Users.insert {
+                it[email] = "a@example.com"
+                it[passHash] = "x"
+            }[Users.id]
             Locations.insert {
-                it[userId] = user; it[name] = "Sofia"; it[lat] = 42.7; it[lon] = 23.3; it[tz] = zone.id; it[solar] = true
-                it[allowControl] = true; it[Locations.maxChargeW] = maxChargeW; it[Locations.reservedPct] = reservedPct
+                it[userId] = user
+                it[name] = "Sofia"
+                it[lat] = 42.7
+                it[lon] = 23.3
+                it[tz] = zone.id
+                it[solar] = true
+                it[allowControl] = true
+                it[Locations.maxChargeW] = maxChargeW
+                it[Locations.reservedPct] = reservedPct
             }[Locations.id]
         }
-        assertTrue(service { "" }.first.configure(id, "client-1", "very-secret", ""))
-        transaction { Solax.update({ Solax.locationId eq id }) { it[plantId] = "P1"; it[businessType] = 1; it[inverterSns] = "SN1" } }
+        assertTrue(SolaxConnection.configure(id, "client-1", "very-secret", ""))
+        transaction {
+            Solax.update({ Solax.locationId eq id }) {
+                it[plantId] = "P1"
+                it[businessType] = 1
+                it[inverterSns] = "SN1"
+            }
+        }
         return locOf(transaction { Locations.selectAll().where { Locations.id eq id }.single() })
     }
 
     private fun bodyOf(r: HttpRequestData) = Json.parseToJsonElement((r.body as TextContent).text).jsonObject
     private fun path(r: HttpRequestData) = r.url.encodedPath
-    private fun at(date: String, time: String) = ZonedDateTime.parse("${date}T$time:00", java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(zone))
+
+    @Suppress("FunctionNameMinLength")
+    private fun at(date: String, time: String) =
+        ZonedDateTime.parse("${date}T$time:00", java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(zone))
 
     private val ok = """{"code":10000,"message":"success","result":{"SN1":{"status":3}},"requestId":"1"}"""
     private fun answer(r: HttpRequestData, reply: String = ok) = if ("oauth/token" in r.url.toString()) token else reply
@@ -93,18 +130,20 @@ class ControlTest {
         assertFailsWith<SolaxError> { denied.stopCharge(loc) }
     }
 
-    // ---- the planner's decisions (NightPlanner.controlInverter) ----
+    // ---- the planner's decisions (InverterControl.control) ----
 
-    private val now = at("2026-12-01", "01:00") // the night zone; the day zone starts at 07:00, charging should end at 06:55
-    private fun planner(svc: SolaxService) = NightPlanner(WeatherService(HttpClient(MockEngine { respond("") })), svc)
+    // the night zone; the day zone starts at 07:00, charging should end at 06:55
+    private val now = at("2026-12-01", "01:00")
+    private fun planner(svc: SolaxService) = InverterControl(svc)
     private fun plant(soc: Double, kwh: Double = 10.0) = SolaxPlant(kwp = 5.0, batteryKwh = kwh, soc = soc)
-    private fun plan(chargeUntil: Long?) = NightPlan("2026-12-01", 0, 0, 0.0, 0.0, 0.0, 60.0, null, "07:00", 20.0, false, chargeUntil, "earlier")
+    private fun plan(chargeUntil: Long?) =
+        NightPlan("2026-12-01", 0, 0, 0.0, 0.0, 0.0, 60.0, null, "07:00", 20.0, false, chargeUntil, "earlier")
 
     @Test fun `charging time is the missing energy over the power plus a margin`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
         val late = at("2026-12-01", "04:42") // 7980 s must start by 04:42
-        val (until, text) = planner(svc).controlInverter(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7)
+        val (until, text) = planner(svc).control(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7)
         // 4 kWh at 2 kW = 2 h, +10 % for losses, +60 s
         assertEquals(7980, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
         assertEquals(late.toInstant().toEpochMilli() + 7_980_000, until)
@@ -116,17 +155,20 @@ class ControlTest {
         val (svc, seen) = service { answer(it) }
         val p = planner(svc)
         val early = at("2026-12-01", "04:30") // the charge has to start at 04:42
-        assertEquals(null, p.controlInverter(loc, null, plant(20.0), 60.0, false, early, early.toLocalDate(), 7).first)
+        assertEquals(null, p.control(loc, null, plant(20.0), 60.0, false, early, early.toLocalDate(), 7).first)
         assertTrue(commands(seen).isEmpty())
         val late = at("2026-12-01", "04:45") // the first reading after that: a bit late, so the timer is cut at 06:55
-        assertEquals(at("2026-12-01", "06:55").toInstant().toEpochMilli(), p.controlInverter(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7).first)
+        assertEquals(
+            at("2026-12-01", "06:55").toInstant().toEpochMilli(),
+            p.control(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7).first,
+        )
         assertEquals(7800, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
     }
 
     @Test fun `charging never runs past five minutes before the day zone`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
-        val (until, _) = planner(svc).controlInverter(loc, null, plant(10.0, 30.0), 100.0, false, now, now.toLocalDate(), 7)
+        val (until, _) = planner(svc).control(loc, null, plant(10.0, 30.0), 100.0, false, now, now.toLocalDate(), 7)
         assertEquals(5 * 3600 + 55 * 60, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
         assertEquals(at("2026-12-01", "06:55").toInstant().toEpochMilli(), until)
     }
@@ -135,7 +177,8 @@ class ControlTest {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
         val running = plan(now.toInstant().toEpochMilli() + 3_600_000)
-        planner(svc).controlInverter(loc, running, plant(40.0), 60.0, false, now, now.toLocalDate(), 7) // 2 kWh left: 1 h + 10 % + 1 min
+        // 2 kWh left: 1 h + 10 % + 1 min
+        planner(svc).control(loc, running, plant(40.0), 60.0, false, now, now.toLocalDate(), 7)
         assertEquals(3960 + 60, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
     }
 
@@ -143,12 +186,13 @@ class ControlTest {
         val loc = place()
         val (svc, seen) = service { answer(it) }
         val running = plan(now.toInstant().toEpochMilli() + 600_000)
-        val (until, _) = planner(svc).controlInverter(loc, running, plant(61.0), 60.0, true, now, now.toLocalDate(), 7)
+        val (until, _) = planner(svc).control(loc, running, plant(61.0), 60.0, true, now, now.toLocalDate(), 7)
         assertEquals(null, until)
         assertTrue(path(commands(seen).single()).endsWith("exit_vpp_mode"))
         seen.clear()
-        val (none, text) = planner(svc).controlInverter(loc, plan(null), plant(61.0), 60.0, true, now, now.toLocalDate(), 7)
-        assertEquals(null, none); assertEquals("earlier", text)
+        val (none, text) = planner(svc).control(loc, plan(null), plant(61.0), 60.0, true, now, now.toLocalDate(), 7)
+        assertEquals(null, none)
+        assertEquals("earlier", text)
         assertTrue(commands(seen).isEmpty())
     }
 
@@ -157,18 +201,23 @@ class ControlTest {
         val off = Loc(1, "Sofia", 42.7, 23.3, zone.id, true, reservedPct = 10, allowControl = false)
         val (svc, seen) = service { answer(it) }
         val running = plan(now.toInstant().toEpochMilli() + 600_000)
-        assertEquals(null, planner(svc).controlInverter(off, running, plant(20.0), 60.0, false, now, now.toLocalDate(), 7).first)
+        assertEquals(
+            null,
+            planner(svc).control(off, running, plant(20.0), 60.0, false, now, now.toLocalDate(), 7).first,
+        )
         assertTrue(path(commands(seen).single()).endsWith("exit_vpp_mode"))
         seen.clear()
-        planner(svc).controlInverter(off, null, plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
+        planner(svc).control(off, null, plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
         assertTrue(commands(seen).isEmpty())
     }
 
     @Test fun `no charge is needed at or below the reserve, or when almost no time is left`() = runBlocking<Unit> {
         val loc = place(reservedPct = 30)
         val (svc, seen) = service { answer(it) }
-        planner(svc).controlInverter(loc, null, plant(20.0), 30.0, false, now, now.toLocalDate(), 7) // the plan's level is the reserve
-        planner(svc).controlInverter(loc, null, plant(59.9), 60.0, false, now, now.toLocalDate(), 7) // 0.01 kWh: under two minutes
+        // the plan's level is the reserve
+        planner(svc).control(loc, null, plant(20.0), 30.0, false, now, now.toLocalDate(), 7)
+        // 0.01 kWh: under two minutes
+        planner(svc).control(loc, null, plant(59.9), 60.0, false, now, now.toLocalDate(), 7)
         assertTrue(commands(seen).isEmpty())
     }
 
@@ -176,7 +225,7 @@ class ControlTest {
         val loc = place()
         val (svc, _) = service { answer(it, """{"code":10403,"message":"no"}""") }
         val until = now.toInstant().toEpochMilli() + 600_000
-        val (kept, text) = planner(svc).controlInverter(loc, plan(until), plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
+        val (kept, text) = planner(svc).control(loc, plan(until), plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
         assertEquals(until, kept)
         assertTrue(!text.isNullOrBlank() && text != "earlier")
     }

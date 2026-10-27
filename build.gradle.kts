@@ -2,6 +2,8 @@ plugins {
     kotlin("jvm") version "2.4.21"
     kotlin("plugin.serialization") version "2.4.21"
     id("io.ktor.plugin") version "3.6.0"
+    id("org.jlleitschuh.gradle.ktlint") version "14.2.0"
+    id("dev.detekt") version "2.0.0-alpha.6"
 }
 
 group = "ilios"
@@ -36,3 +38,9 @@ dependencies {
 application { mainClass.set("ilios.MainKt") }
 
 tasks.test { useJUnitPlatform() }
+
+detekt {
+    buildUponDefaultConfig = true
+    allRules = true
+    config.setFrom("config/detekt.yml")
+}
