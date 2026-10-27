@@ -243,7 +243,14 @@ fun buildReport(
     }
     val watering = Watering(r1(soFar), r1(expected), advise(crops.getValue("plants")), advise(crops.getValue("grass")), advise(crops.getValue("trees")))
 
-    val battery = if (loc.solar && kwp > 0) Battery(plant?.batteryKwh ?: 0.0, plant?.soc, plant?.remainingKwh, plant?.powerW, plant?.readAt) else null
+    val battery = if (loc.solar && kwp > 0) {
+        val last = batteryToday.lastOrNull { it.soc != null }
+        val lastAt = last?.let { today.atTime(java.time.LocalTime.parse(it.t)).atZone(ZoneId.of(loc.tz)).toInstant().toEpochMilli() }
+        if (last != null && lastAt != null && lastAt > (plant?.readAt ?: 0L)) { // the chart's 5-minute history is newer than the hourly reading: show the same value
+            val kwh = plant?.batteryKwh ?: 0.0
+            Battery(kwh, last.soc, if (kwh > 0) kwh * last.soc!! / 100 else null, last.batW ?: plant?.powerW, lastAt)
+        } else Battery(plant?.batteryKwh ?: 0.0, plant?.soc, plant?.remainingKwh, plant?.powerW, plant?.readAt)
+    } else null
     val pvForecast = if (battery != null && kwp > 0) intraday?.points.orEmpty().filter { it.radWm2 != null }
         .map { TodayPoint(it.t, null, round(kwp * it.radWm2!! * ratio)) } else emptyList()
     val pvForecastNext = if (battery != null && kwp > 0) intraday?.next.orEmpty().filter { it.radWm2 != null }
