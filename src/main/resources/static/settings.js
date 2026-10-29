@@ -34,11 +34,11 @@ function placeCard(l,reload,move){
   const eff=h('input',{type:'number',min:30,max:100,step:1,value:l.chargeEffPct??70,style:'width:100%',title:'Каква част (%) от мощността на зареждане стига до батерията; останалото се губи'});
   const control=h('input',{type:'checkbox',checked:!!l.allowControl});
   // the management panel: the inverter is programmed to charge the battery only when this is on
-  const manage=h('div',{cls:'fields',hidden:!l.allowControl},h('span',{},'Резервирана батерия (%)'),reserve,h('span',{},'Макс. мощност на зареждане (kW)'),maxCharge);
+  const manage=h('div',{cls:'fields',hidden:!l.allowControl},h('span',{},'Резервирана батерия (%)'),reserve,h('span',{},'Макс. мощност на зареждане (kW)'),maxCharge,h('span',{},'Ефективност на зареждане (%)'),eff);
   control.addEventListener('change',()=>{manage.hidden=!control.checked});
   const panel=h('div',{cls:'panel'},h('label',{cls:'inl'},control,' Разреши управлене'),manage);
   const fields=h('div',{cls:'fields'},
-    h('span',{},'Доставчик на ток'),supplier,h('span',{},'Ефективност на зареждане (%)'),eff,h('span',{},'Client ID'),cid,h('span',{},'Client Secret'),sec,plantLabel,plant,status,battery,capacity);
+    h('span',{},'Доставчик на ток'),supplier,h('span',{},'Client ID'),cid,h('span',{},'Client Secret'),sec,plantLabel,plant,status,battery,capacity);
   // the connection settings on the left, the management panel to their right (below them on narrow screens)
   const cols=h('div',{cls:'cols',hidden:!l.solar},fields,panel);
   solar.addEventListener('change',()=>{cols.hidden=refresh.hidden=!solar.checked});
