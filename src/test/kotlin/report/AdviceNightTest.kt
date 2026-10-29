@@ -14,6 +14,12 @@ class AdviceNightTest {
         assertEquals(0.89, n.savingEur) // 7.4 x 0.12
     }
 
+    @Test fun `charging losses raise the cost and cut the saving`() {
+        val n = assertNotNull(nightCharge(11.4, 10.0, 4.0, 0.25, 0.13, 0.0, 0.7))
+        assertEquals(1.37, n.costEur) // 7.4 / 0.7 x 0.13
+        assertEquals(0.48, n.savingEur) // 7.4 x 0.25 - 1.37
+    }
+
     @Test fun `no night charge when the sun fills it or the battery is full`() {
         assertEquals(false, nightCharge(11.4, 10.0, 15.0)!!.charge)
         assertEquals(false, nightCharge(11.4, 99.0, 2.0)!!.charge)

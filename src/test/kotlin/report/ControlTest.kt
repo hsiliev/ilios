@@ -64,7 +64,7 @@ class ControlTest {
     }
 
     /** A connected place with management enabled, a known plant and one inverter. */
-    private fun place(maxChargeW: Int = DEFAULT_MAX_CHARGE_W, reservedPct: Int = 10): Loc {
+    private fun place(maxChargeW: Int = DEFAULT_MAX_CHARGE_W, reservedPct: Int = 10, chargeEffPct: Int = 100): Loc {
         initDb(tempDbPath())
         val id = transaction {
             val user = Users.insert {
@@ -81,6 +81,7 @@ class ControlTest {
                 it[allowControl] = true
                 it[Locations.maxChargeW] = maxChargeW
                 it[Locations.reservedPct] = reservedPct
+                it[Locations.chargeEffPct] = chargeEffPct
             }[Locations.id]
         }
         assertTrue(SolaxConnection.configure(id, "client-1", "very-secret", ""))
@@ -142,27 +143,36 @@ class ControlTest {
     @Test fun `charging time is the missing energy over the power plus a margin`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
-        val late = at("2026-12-01", "04:42") // 7980 s must start by 04:42
+        val late = at("2026-12-01", "04:54") // 7260 s must start by 04:54
         val (until, text) = planner(svc).control(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7)
-        // 4 kWh at 2 kW = 2 h, +10 % for losses, +60 s
-        assertEquals(7980, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
-        assertEquals(late.toInstant().toEpochMilli() + 7_980_000, until)
+        // 4 kWh at 2 kW = 2 h, +60 s
+        assertEquals(7260, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+        assertEquals(late.toInstant().toEpochMilli() + 7_260_000, until)
         assertTrue(text!!.contains("60%") && text.contains("2000 W"))
+    }
+
+    @Test fun `only the efficiency share of the power reaches the battery`() = runBlocking<Unit> {
+        val loc = place(maxChargeW = 2000, chargeEffPct = 70)
+        val (svc, seen) = service { answer(it) }
+        val running = plan(now.toInstant().toEpochMilli() + 3_600_000)
+        planner(svc).control(loc, running, plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
+        // 4 kWh at 2 kW x 70 % = 1.4 kW: 10285 s + 60 s
+        assertEquals(10_345, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
     }
 
     @Test fun `charging waits so that it ends shortly before the day zone`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
         val p = planner(svc)
-        val early = at("2026-12-01", "04:30") // the charge has to start at 04:42
+        val early = at("2026-12-01", "04:40") // the charge has to start at 04:54
         assertEquals(null, p.control(loc, null, plant(20.0), 60.0, false, early, early.toLocalDate(), 7).first)
         assertTrue(commands(seen).isEmpty())
-        val late = at("2026-12-01", "04:45") // the first reading after that: a bit late, so the timer is cut at 06:55
+        val late = at("2026-12-01", "04:57") // the first reading after that: a bit late, so the timer is cut at 06:55
         assertEquals(
             at("2026-12-01", "06:55").toInstant().toEpochMilli(),
             p.control(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7).first,
         )
-        assertEquals(7800, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+        assertEquals(7080, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
     }
 
     @Test fun `charging never runs past five minutes before the day zone`() = runBlocking<Unit> {
@@ -177,9 +187,9 @@ class ControlTest {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
         val running = plan(now.toInstant().toEpochMilli() + 3_600_000)
-        // 2 kWh left: 1 h + 10 % + 1 min
+        // 2 kWh left: 1 h + 1 min
         planner(svc).control(loc, running, plant(40.0), 60.0, false, now, now.toLocalDate(), 7)
-        assertEquals(3960 + 60, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+        assertEquals(3600 + 60, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
     }
 
     @Test fun `a charge that reached the plan is ended, and nothing is sent when none runs`() = runBlocking<Unit> {

@@ -6,8 +6,10 @@ import ilios.auth.AuthService
 import ilios.badRequest
 import ilios.db.Loc
 import ilios.db.Locations
+import ilios.db.MAX_CHARGE_EFF_PCT
 import ilios.db.MAX_MAX_CHARGE_W
 import ilios.db.MAX_RESERVE
+import ilios.db.MIN_CHARGE_EFF_PCT
 import ilios.db.MIN_MAX_CHARGE_W
 import ilios.db.locOf
 import ilios.report.TARIFFS
@@ -48,7 +50,7 @@ private const val MAX_COUNTRY = 80
 private fun locationOut(r: ResultRow, info: SolaxInfo?) = LocationOut(
     r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar], r[Locations.supplier],
     r[Locations.reservedPct], r[Locations.allowControl], r[Locations.maxChargeW],
-    info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(),
+    r[Locations.chargeEffPct], info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(),
     info?.batteryStatus.orEmpty(), info?.batteryInfo.orEmpty(), info?.plants.orEmpty(),
 )
 
@@ -71,6 +73,9 @@ private fun checkSettings(p: PlaceSettings) {
             "Мощността на зареждане трябва да е между ${MIN_MAX_CHARGE_W / MILLIS.toDouble()} " +
                 "и ${MAX_MAX_CHARGE_W / MILLIS} kW",
         )
+    }
+    if (p.chargeEffPct != null && p.chargeEffPct !in MIN_CHARGE_EFF_PCT..MAX_CHARGE_EFF_PCT) {
+        badRequest("Ефективността на зареждане трябва да е между $MIN_CHARGE_EFF_PCT и $MAX_CHARGE_EFF_PCT %")
     }
 }
 
@@ -157,10 +162,11 @@ private suspend fun ApplicationCall.changePlace(uid: Long, solax: SolaxService) 
     val updated = transaction {
         Locations.update({ Locations.id eq lid and (Locations.userId eq uid) }) {
             it[solar] = p.solar
-            if (p.supplier != null) it[supplier] = p.supplier
-            if (p.reservedPct != null) it[reservedPct] = p.reservedPct
-            if (p.allowControl != null) it[allowControl] = p.allowControl
-            if (p.maxChargeW != null) it[maxChargeW] = p.maxChargeW
+            p.supplier?.let { v -> it[supplier] = v }
+            p.reservedPct?.let { v -> it[reservedPct] = v }
+            p.allowControl?.let { v -> it[allowControl] = v }
+            p.maxChargeW?.let { v -> it[maxChargeW] = v }
+            p.chargeEffPct?.let { v -> it[chargeEffPct] = v }
         }
     }
     if (updated == 0) throw HttpError(HttpStatusCode.NotFound, "Няма такова място")

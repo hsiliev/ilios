@@ -14,8 +14,6 @@ import kotlin.math.ceil
 
 private const val HALF_MINUTE = 30
 
-/** Extra charging time (a share) for the losses of charging, so the battery really reaches the planned level. */
-internal const val CHARGE_MARGIN = 1.1
 internal const val CHARGE_END_BEFORE_MS = 5 * 60_000L // the charge should end this long before the day zone starts
 private const val MIN_CHARGE_SECONDS = 120 // nothing worthwhile is left before the day zone when less than this remains
 private const val TIMER_EXTRA_SECONDS = 60L
@@ -27,8 +25,8 @@ internal typealias ChargeState = Pair<Long?, String?>
 /**
  * Remote-mode charging (SolaX Push Power at the place's max charging power) for the night plan; never throws (except
  * cancellation).
- * Charging runs on a timer that the inverter honours by itself: the energy still missing divided by the power, plus
- * a margin, and never
+ * Charging runs on a timer that the inverter honours by itself: the energy still missing divided by the power that
+ * reaches the battery (the place's charging efficiency), and never
  * past 5 minutes before the day zone start; a charge is not started before it has to be, so that it ends then. Each
  * fresh battery reading
  * sends the command again with the time recomputed (a new command replaces a running one), and as soon as the plan
@@ -97,7 +95,7 @@ internal class InverterControl(private val solax: SolaxService) {
         val soc = plant.soc ?: return null
         val capacityKwh = plant.batteryKwh ?: return null
         val missingKwh = (targetSoc - soc) / 100 * capacityKwh
-        val need = (missingKwh / (loc.maxChargeW / 1000.0) * 3600 * CHARGE_MARGIN).toLong() + TIMER_EXTRA_SECONDS
+        val need = (missingKwh / (loc.maxChargeW / 1000.0 * loc.chargeEfficiency) * 3600).toLong() + TIMER_EXTRA_SECONDS
         val seconds = minOf((end - now) / 1000, need)
         val tooEarly = !running && now < end - need * 1000
         return seconds.takeUnless { it < MIN_CHARGE_SECONDS || tooEarly }

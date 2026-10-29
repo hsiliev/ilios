@@ -24,7 +24,8 @@ val PRICE_NIGHT = TARIFFS.getValue(DEFAULT_SUPPLIER).second
  * Whether to charge the battery from the grid tonight at the cheap tariff. The room in the battery is what
  * tomorrow's sun is not
  * expected to fill; that energy bought at night instead of during the day is the saving. Null when the charge is
- * unknown.
+ * unknown. Of the grid energy bought only [efficiency] reaches the battery, so the cost is that of kwh ÷ [efficiency]
+ * and the saving is the day price of kwh minus that cost.
  */
 fun nightCharge(
     batteryKwh: Double,
@@ -33,6 +34,7 @@ fun nightCharge(
     dayPrice: Double = PRICE_DAY,
     nightPrice: Double = PRICE_NIGHT,
     homeKwh: Double = 0.0,
+    efficiency: Double = 1.0,
 ): NightCharge? {
     if (batteryKwh <= 0 || soc == null || tomorrowKwh == null) return null
     val room = batteryKwh * (1 - soc.coerceIn(0.0, 100.0) / 100)
@@ -48,6 +50,7 @@ fun nightCharge(
             0.0,
             dayPrice,
             nightPrice,
+            efficiency,
             if (room < MIN_NIGHT_KWH
             ) {
                 "Батерията е почти пълна – не е нужно нощно зареждане."
@@ -56,8 +59,8 @@ fun nightCharge(
             },
         )
     }
-    val cost = kwh * nightPrice
-    val saving = kwh * (dayPrice - nightPrice)
+    val cost = kwh / efficiency * nightPrice
+    val saving = kwh * dayPrice - cost
     return NightCharge(
         true,
         r1(kwh),
@@ -65,6 +68,7 @@ fun nightCharge(
         r2(cost),
         dayPrice,
         nightPrice,
+        efficiency,
         "Заредете батерията от мрежата през нощта с около ${bg(
             r1(kwh),
         )} kWh: утре слънцето (≈ ${bg(r1(tomorrowKwh))} kWh)$home няма да я напълни. " +
@@ -79,7 +83,8 @@ fun nightCharge(
  * down at its reserved
  * level (+1%) the house buys from the grid at day price what a night charge would have bought at night price. A
  * battery that never ran
- * empty lost nothing. Null until the day zone has started.
+ * empty lost nothing. The night charge that would have supplied that energy costs kwh ÷ [efficiency] at night price.
+ * Null until the day zone has started.
  */
 fun missedCharge(
     batteryKwh: Double,
@@ -88,6 +93,7 @@ fun missedCharge(
     dayFromHour: Int,
     dayPrice: Double = PRICE_DAY,
     nightPrice: Double = PRICE_NIGHT,
+    efficiency: Double = 1.0,
 ): MissedCharge? {
     val from = "%02d:00".format(dayFromHour)
     val day = pts.filter { it.soc != null && it.t >= from }
@@ -95,7 +101,7 @@ fun missedCharge(
     val empty = day.filter { it.soc!! <= reservedPct + 1.0 }
     val kwh = empty.sumOf { (it.gridW ?: 0.0).coerceAtLeast(0.0) } / (SLOTS_PER_HOUR * MILLIS) // 5-minute steps
     if (kwh < MIN_MISSED_KWH) return MissedCharge(0.0, 0.0, "Батерията не е свършила през деня – няма спестявания.")
-    val lost = kwh * (dayPrice - nightPrice)
+    val lost = kwh * dayPrice - kwh / efficiency * nightPrice
     return MissedCharge(
         r1(kwh),
         r2(lost),

@@ -28,8 +28,8 @@ class Battery(
 )
 
 /**
- * Night charging advice: charge = grid charging is worth it; kwh = energy to take from the grid; savingEur = what it
- * saves vs. buying that energy at the day price.
+ * Night charging advice: charge = grid charging is worth it; kwh = energy to put into the battery (the grid supplies
+ * kwh ÷ efficiency); savingEur = what it saves vs. buying that energy at the day price.
  */
 @Serializable
 class NightCharge(
@@ -39,12 +39,13 @@ class NightCharge(
     val costEur: Double,
     val dayPrice: Double,
     val nightPrice: Double,
+    val efficiency: Double,
     val text: String,
 )
 
 /**
  * Today's lost saving: kwh = energy the battery lacked at the start of the day and the sun did not make up for;
- * lostEur = that energy at day price minus night price.
+ * lostEur = that energy at day price minus its night charge (energy ÷ efficiency at night price).
  */
 @Serializable
 class MissedCharge(val kwh: Double, val lostEur: Double, val text: String)

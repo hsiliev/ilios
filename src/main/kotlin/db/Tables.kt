@@ -42,6 +42,9 @@ object Locations : Table("locations") {
     // power cap (W) of the grid charging programmed into the inverter
     val maxChargeW = integer("max_charge_w").default(DEFAULT_MAX_CHARGE_W)
 
+    // share (%) of the charging power that reaches the battery (the rest is lost); scales charge times and savings
+    val chargeEffPct = integer("charge_eff_pct").default(DEFAULT_CHARGE_EFF_PCT)
+
     // electricity supplier (key of TARIFFS) for the night-charge advice
     val supplier = varchar("supplier", 20).default(DEFAULT_SUPPLIER)
     override val primaryKey = PrimaryKey(id)

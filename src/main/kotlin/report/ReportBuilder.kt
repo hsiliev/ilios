@@ -100,10 +100,19 @@ fun buildReport(
                 dayPrice,
                 nightPrice,
                 homeDay ?: 0.0,
+                loc.chargeEfficiency,
             )
         },
         missed = battery?.let {
-            missedCharge(it.batteryKwh, batteryToday, loc.reservedPct, nightTo, dayPrice, nightPrice)
+            missedCharge(
+                it.batteryKwh,
+                batteryToday,
+                loc.reservedPct,
+                nightTo,
+                dayPrice,
+                nightPrice,
+                loc.chargeEfficiency,
+            )
         },
     )
 }
@@ -270,11 +279,11 @@ private fun plannedChargeOf(
             i.battery.batteryKwh,
             target,
             loc.maxChargeW.toDouble(),
-            CHARGE_MARGIN,
+            loc.chargeEfficiency,
             running,
         )
             ?: return null
-    return PlannedCharge(start, w.end, loc.maxChargeW.toDouble(), target)
+    return PlannedCharge(start, w.end, loc.maxChargeW.toDouble(), target, loc.chargeEfficiency)
 }
 
 private fun storedTarget(stored: NightPlan): Double? = stored.takeIf { !it.reached && it.totalKwh > 0 }?.targetSoc

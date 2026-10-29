@@ -76,7 +76,7 @@ function nightLine(r){
   if(kwh>0){
     charge=true;
     text='Тази нощ заредете ≈ '+f1(kwh)+' kWh'+(plan?` (до ${f1(plan.targetSoc,0)}%, преди ${plan.stopBy} ч.)`:'');
-    if(n)text+=' за ≈ '+eur(kwh*n.nightPrice)+' – ще спестите ≈ '+eur(kwh*(n.dayPrice-n.nightPrice))+' спрямо дневна цена';
+    if(n)text+=' за ≈ '+eur(kwh/n.efficiency*n.nightPrice)+' – ще спестите ≈ '+eur(kwh*n.dayPrice-kwh/n.efficiency*n.nightPrice)+' спрямо дневна цена';
   }
   if(m)text+=' · '+(m.lostEur>0?'днес пропуснахте ≈ '+eur(m.lostEur):'днес няма спестявания');
   const t=[n&&n.text,plan&&plan.totalKwh>0?`${f1(plan.dayStartKwh)} kWh за началото на деня`+(plan.sunAt?` (до ${plan.sunAt} ч.)`:'')+` + ${f1(plan.solarKwh)} kWh компенсация на слънцето`:'',m&&m.text].filter(Boolean).join('\n');

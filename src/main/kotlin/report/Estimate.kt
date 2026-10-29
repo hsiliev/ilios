@@ -41,7 +41,13 @@ class Estimate(val points: List<EstimatePoint>, val peakSoc: Double, val importK
  * served from the grid too (verified on the inverter: the grid supplies the charge plus the load) and the battery is
  * not discharged.
  */
-class PlannedCharge(val fromSlot: Int, val toSlot: Int, val powerW: Double, val targetSoc: Double) {
+class PlannedCharge(
+    val fromSlot: Int,
+    val toSlot: Int,
+    val powerW: Double,
+    val targetSoc: Double,
+    val efficiency: Double = 1.0,
+) {
     fun runsAt(slot: Int) = slot in fromSlot until toSlot
 
     /** The energy the battery of [capacityKwh] holds at the target charge. */
@@ -51,8 +57,8 @@ class PlannedCharge(val fromSlot: Int, val toSlot: Int, val powerW: Double, val 
 /**
  * The slot at which the planned charge starts, as the inverter control does: as late as possible so that it still
  * reaches [targetSoc] before
- * [endSlot] (the missing energy ÷ power × [margin]), or at once ([nowSlot]) when a charge is already running. Null
- * when nothing is missing.
+ * [endSlot] (the missing energy ÷ (power × [efficiency])), or at once ([nowSlot]) when a charge is already running.
+ * Null when nothing is missing.
  * [plain] is the estimate without the charge, running at least to [endSlot].
  */
 fun plannedChargeStart(
@@ -62,14 +68,14 @@ fun plannedChargeStart(
     batteryKwh: Double,
     targetSoc: Double,
     powerW: Double,
-    margin: Double,
+    efficiency: Double,
     running: Boolean,
 ): Int? {
     if (endSlot <= nowSlot || batteryKwh <= 0 || powerW <= 0) return null
     return (nowSlot until endSlot).firstOrNull { s ->
         val soc = plain.points.getOrNull(s - nowSlot)?.soc ?: return@firstOrNull false
         val missingKwh = (targetSoc - soc) / 100 * batteryKwh
-        val slots = missingKwh / (powerW / 1000) * margin * 12 // hours -> 5-minute slots
+        val slots = missingKwh / (powerW / 1000 * efficiency) * 12 // hours -> 5-minute slots
         // missingKwh <= 0: still above the target, the battery has to drain first
         missingKwh > 0 && (running || s + slots >= endSlot)
     }
@@ -143,9 +149,9 @@ private class BatterySim(var energyKwh: Double, val capacityKwh: Double, val flo
      * charge plus the load).
      */
     private fun chargeFromGrid(charge: PlannedCharge, netKwh: Double): SlotResult {
-        val add = minOf(charge.powerW * SLOT_HOURS_KW, charge.targetKwh(capacityKwh) - energyKwh)
+        val add = minOf(charge.powerW * charge.efficiency * SLOT_HOURS_KW, charge.targetKwh(capacityKwh) - energyKwh)
         energyKwh += add
-        val chargeW = add / SLOT_HOURS_KW
+        val chargeW = add / charge.efficiency / SLOT_HOURS_KW // drawn from the grid
         return SlotResult(0.0, maxOf(0.0, -netKwh / SLOT_HOURS_KW) + chargeW, chargeW)
     }
 

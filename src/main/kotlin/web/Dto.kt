@@ -1,5 +1,6 @@
 package ilios.web
 
+import ilios.db.DEFAULT_CHARGE_EFF_PCT
 import ilios.db.DEFAULT_MAX_CHARGE_W
 import ilios.db.DEFAULT_RESERVE
 import ilios.db.DEFAULT_SUPPLIER
@@ -30,6 +31,7 @@ import kotlinx.serialization.Serializable
     val reservedPct: Int? = null,
     val allowControl: Boolean? = null,
     val maxChargeW: Int? = null,
+    val chargeEffPct: Int? = null,
     val solaxClientId: String = "",
     val solaxClientSecret: String = "",
     val solaxPlantId: String = "",
@@ -44,6 +46,7 @@ import kotlinx.serialization.Serializable
     val reservedPct: Int = DEFAULT_RESERVE,
     val allowControl: Boolean = false,
     val maxChargeW: Int = DEFAULT_MAX_CHARGE_W,
+    val chargeEffPct: Int = DEFAULT_CHARGE_EFF_PCT,
     val solaxClientId: String = "",
     val solaxPlantId: String = "",
     val solaxHasSecret: Boolean = false,
