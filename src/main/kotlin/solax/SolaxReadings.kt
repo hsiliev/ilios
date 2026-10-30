@@ -4,6 +4,7 @@ import ilios.db.BatteryDays
 import ilios.db.DischargeDays
 import ilios.db.Produced
 import ilios.db.SolarToday
+import ilios.report.ChargePoint
 import ilios.report.DischargePoint
 import ilios.report.LoadPoint
 import ilios.report.TodayPoint
@@ -108,6 +109,19 @@ object SolaxReadings {
             .toSortedMap()
             .values
             .map { it.toMap() }
+    }
+
+    /** The stored 5-minute battery charge and charging power of the past days, for measuring the efficiency. */
+    fun chargePoints(locationId: Long): List<ChargePoint> = transaction {
+        DischargeDays.selectAll().where { DischargeDays.locationId eq locationId and DischargeDays.soc.isNotNull() }
+            .map {
+                ChargePoint(
+                    LocalDate.parse(it[DischargeDays.day]),
+                    it[DischargeDays.t],
+                    it[DischargeDays.soc],
+                    it[DischargeDays.chargeW],
+                )
+            }
     }
 
     /** The highest battery charge (%) each past day reached, where SolaX's history was fetched. */

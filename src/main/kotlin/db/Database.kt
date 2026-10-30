@@ -16,6 +16,9 @@ fun initDb(path: String) {
         val hadDeviceKwh = runCatching { exec("SELECT battery_device_kwh FROM solax WHERE 1 = 0") }.isSuccess
         // days stored before the consumption and grid columns existed are fetched again once
         val hadLoadW = runCatching { exec("SELECT load_w FROM discharge_days WHERE 1 = 0") }.isSuccess
+        // the charging efficiency became measured: days stored without the charge are fetched again once, and places
+        // left at the old default (70 %) switch to the measured value
+        val hadSoc = runCatching { exec("SELECT soc FROM discharge_days WHERE 1 = 0") }.isSuccess
         val tables =
             arrayOf(
                 Users, Tokens, Locations, Daily, Intraday15, Solax, Produced, BatteryDays,
@@ -25,7 +28,8 @@ fun initDb(path: String) {
         MigrationUtils.statementsRequiredForDatabaseMigration(*tables).filterNot {
             it.startsWith("DROP ")
         }.forEach { exec(it) }
-        if (!hadLoadW) exec("DELETE FROM discharge_days")
+        if (!hadLoadW || !hadSoc) exec("DELETE FROM discharge_days")
+        if (!hadSoc) exec("UPDATE locations SET charge_eff_pct = NULL WHERE charge_eff_pct = 70")
         if (!hadAc || !hadLoad) exec("UPDATE solax SET produced_through = NULL")
         if (!hadDeviceKwh) exec("UPDATE solax SET plant_read_at = NULL")
         // a day above kWp x 24 is a bad cloud value, also in rows stored before the check existed

@@ -2,7 +2,9 @@ package ilios.solax
 
 import ilios.db.DischargeDays
 import ilios.db.Loc
+import ilios.db.Locations
 import ilios.historyStart
+import ilios.report.measuredChargeEffPct
 import ilios.solax.api.RETRY_AFTER_MS
 import ilios.solax.api.attempt
 import ilios.solax.api.gridPowerOf
@@ -17,6 +19,7 @@ import org.jetbrains.exposed.v1.jdbc.batchInsert
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.update
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -48,14 +51,10 @@ internal class DischargeHistory(private val client: SolaxClient) {
             },
         ) {
             val sns = link.inverterSerials()
-            if (sns.isEmpty() ||
-                !missing.all {
-                    cacheDay(link, sns, it)
-                }
-            ) {
-                return@attempt // each day once; afterwards one new day a day
-            }
-            tryAt.remove(loc.id)
+            if (sns.isEmpty()) return@attempt
+            val done = missing.all { cacheDay(link, sns, it) }
+            measureChargeEfficiency(link)
+            if (done) tryAt.remove(loc.id) // else each day once; afterwards one new day a day
         }
     }
 
@@ -81,10 +80,12 @@ internal class DischargeHistory(private val client: SolaxClient) {
         val from = day.atStartOfDay(link.zone).toInstant()
         val to = day.plusDays(1).atStartOfDay(link.zone).toInstant()
         val battery = HashMap<LocalDateTime, Double>() // charging power, several batteries add up (positive = charging)
+        val soc = HashMap<LocalDateTime, MutableList<Double>>() // several batteries are averaged
         for ((m, p) in link.historyOfDay(sns, 2, day, from, to)) {
             p.number("chargeDischargePower")?.let {
                 battery.merge(m, it, Double::plus)
             }
+            p.number("batterySOC")?.let { soc.getOrPut(m) { ArrayList() } += it }
         }
         if (battery.isEmpty()) return false
         val pv = HashMap<LocalDateTime, Double>()
@@ -96,29 +97,41 @@ internal class DischargeHistory(private val client: SolaxClient) {
                 gridPowerOf(p)?.let { grid.merge(m, it, Double::plus) }
             }
         }
-        store(link.loc.id, day, battery, grid, consumptionOf(battery, pv, grid))
+        val socSlots = soc.entries.groupBy({ it.key.slot5() }, { it.value.average() })
+        store(link.loc.id, day, battery, grid, socSlots, consumptionOf(battery, pv, grid))
         return true
     }
 
+    /** Measures the charging efficiency on the stored nights; an earlier figure stays when they have no charging. */
+    private fun measureChargeEfficiency(link: SolaxLink) {
+        val capacity = SolaxRepository.plant(link.loc.id)?.batteryKwh?.takeIf { it > 0 } ?: return
+        val pct = measuredChargeEffPct(SolaxReadings.chargePoints(link.loc.id), capacity, link.zone) ?: return
+        transaction { Locations.update({ Locations.id eq link.loc.id }) { it[chargeEffMeasured] = pct } }
+    }
+
+    @Suppress("LongParameterList")
     private fun store(
         locationId: Long,
         day: LocalDate,
         battery: Map<LocalDateTime, Double>,
         grid: Map<LocalDateTime, Double>,
+        soc: Map<String, List<Double>>,
         loads: Map<String, Double>,
     ) {
-        val discharge = battery.entries.groupBy({ it.key.slot5() }, { maxOf(0.0, -it.value) }).toSortedMap()
+        val slots = battery.entries.groupBy({ it.key.slot5() }, { it.value }).toSortedMap()
         val gridSlots = grid.entries.groupBy({ it.key.slot5() }, { it.value })
         transaction {
             DischargeDays.deleteWhere {
                 DischargeDays.locationId eq locationId and
                     (DischargeDays.day eq day.toString())
             }
-            DischargeDays.batchInsert(discharge.entries) { (t, w) ->
+            DischargeDays.batchInsert(slots.entries) { (t, w) ->
                 this[DischargeDays.locationId] = locationId
                 this[DischargeDays.day] = day.toString()
                 this[DischargeDays.t] = t
-                this[DischargeDays.dischargeW] = w.average()
+                this[DischargeDays.dischargeW] = w.map { maxOf(0.0, -it) }.average()
+                this[DischargeDays.chargeW] = w.map { maxOf(0.0, it) }.average()
+                this[DischargeDays.soc] = soc[t]?.average()
                 this[DischargeDays.loadW] = loads[t]
                 this[DischargeDays.gridW] = gridSlots[t]?.average()
             }

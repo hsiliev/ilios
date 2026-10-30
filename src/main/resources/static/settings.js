@@ -31,10 +31,13 @@ function placeCard(l,reload,move){
   supplier.value=l.supplier||'electrohold';
   const reserve=h('input',{type:'number',min:0,max:50,step:1,value:l.reservedPct??0,style:'width:100%',title:'Заряд на батерията (%), под който инверторът не я разрежда'});
   const maxCharge=h('input',{type:'number',min:0.5,max:6,step:0.5,value:(l.maxChargeW??2000)/1000,style:'width:100%',title:'Най-голямата мощност (kW), с която инверторът зарежда батерията от мрежата'});
-  const eff=h('input',{type:'number',min:30,max:100,step:1,value:l.chargeEffPct??70,style:'width:100%',title:'Каква част (%) от мощността на зареждане стига до батерията; останалото се губи'});
+  // empty = the efficiency measured on the night charges (or the default until there is one); a typed value overrides it
+  const auto=l.chargeEffMeasured??l.chargeEffDefault;
+  const eff=h('input',{type:'number',min:30,max:100,step:1,value:l.chargeEffPct??'',placeholder:auto+' (автоматично)',style:'width:100%',title:'Каква част (%) от мощността на зареждане стига до батерията; останалото се губи. Оставете празно за измерената стойност'});
+  const effMeasured=h('span',{cls:'mut',style:'display:block;font-size:13px'},l.chargeEffMeasured!=null?'измерена: '+l.chargeEffMeasured+' %':'измерена: още няма нощно зареждане, ползва се '+l.chargeEffDefault+' %');
   const control=h('input',{type:'checkbox',checked:!!l.allowControl});
   // the management panel: the inverter is programmed to charge the battery only when this is on
-  const manage=h('div',{cls:'fields',hidden:!l.allowControl},h('span',{},'Резервирана батерия (%)'),reserve,h('span',{},'Макс. мощност на зареждане (kW)'),maxCharge,h('span',{},'Ефективност на зареждане (%)'),eff);
+  const manage=h('div',{cls:'fields',hidden:!l.allowControl},h('span',{},'Резервирана батерия (%)'),reserve,h('span',{},'Макс. мощност на зареждане (kW)'),maxCharge,h('span',{},'Ефективност на зареждане (%)'),h('div',{},eff,effMeasured));
   control.addEventListener('change',()=>{manage.hidden=!control.checked});
   const panel=h('div',{cls:'panel'},h('label',{cls:'inl'},control,' Разреши управлене'),manage);
   const fields=h('div',{cls:'fields'},
@@ -42,7 +45,7 @@ function placeCard(l,reload,move){
   // the connection settings on the left, the management panel to their right (below them on narrow screens)
   const cols=h('div',{cls:'cols',hidden:!l.solar},fields,panel);
   solar.addEventListener('change',()=>{cols.hidden=refresh.hidden=!solar.checked});
-  const save=async()=>showStatus(await api('/locations/'+l.id,'PUT',{solar:solar.checked,supplier:supplier.value,reservedPct:Math.min(50,Math.max(0,Math.round(+reserve.value)||0)),allowControl:control.checked,maxChargeW:Math.min(6000,Math.max(500,Math.round(+maxCharge.value*1000)||2000)),chargeEffPct:Math.min(100,Math.max(30,Math.round(+eff.value)||70)),
+  const save=async()=>showStatus(await api('/locations/'+l.id,'PUT',{solar:solar.checked,supplier:supplier.value,reservedPct:Math.min(50,Math.max(0,Math.round(+reserve.value)||0)),allowControl:control.checked,maxChargeW:Math.min(6000,Math.max(500,Math.round(+maxCharge.value*1000)||2000)),chargeEffPct:eff.value===''?null:Math.min(100,Math.max(30,Math.round(+eff.value)||auto)),
     solaxClientId:cid.value,solaxClientSecret:sec.value,solaxPlantId:plant.value}));
   const up=h('button',{type:'button',cls:'ib',title:'Нагоре',"aria-label":'Премести '+l.name+' нагоре',onclick:()=>move(-1)},svg(ICONS.up));
   const down=h('button',{type:'button',cls:'ib',title:'Надолу',"aria-label":'Премести '+l.name+' надолу',onclick:()=>move(1)},svg(ICONS.down));

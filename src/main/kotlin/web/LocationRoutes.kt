@@ -4,6 +4,7 @@ import ilios.HttpError
 import ilios.MILLIS
 import ilios.auth.AuthService
 import ilios.badRequest
+import ilios.db.DEFAULT_CHARGE_EFF_PCT
 import ilios.db.Loc
 import ilios.db.Locations
 import ilios.db.MAX_CHARGE_EFF_PCT
@@ -50,7 +51,8 @@ private const val MAX_COUNTRY = 80
 private fun locationOut(r: ResultRow, info: SolaxInfo?) = LocationOut(
     r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar], r[Locations.supplier],
     r[Locations.reservedPct], r[Locations.allowControl], r[Locations.maxChargeW],
-    r[Locations.chargeEffPct], info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(),
+    r[Locations.chargeEffPct], r[Locations.chargeEffMeasured], DEFAULT_CHARGE_EFF_PCT,
+    info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(),
     info?.batteryStatus.orEmpty(), info?.batteryInfo.orEmpty(), info?.plants.orEmpty(),
 )
 
@@ -166,7 +168,7 @@ private suspend fun ApplicationCall.changePlace(uid: Long, solax: SolaxService) 
             p.reservedPct?.let { v -> it[reservedPct] = v }
             p.allowControl?.let { v -> it[allowControl] = v }
             p.maxChargeW?.let { v -> it[maxChargeW] = v }
-            p.chargeEffPct?.let { v -> it[chargeEffPct] = v }
+            it[chargeEffPct] = p.chargeEffPct
         }
     }
     if (updated == 0) throw HttpError(HttpStatusCode.NotFound, "Няма такова място")

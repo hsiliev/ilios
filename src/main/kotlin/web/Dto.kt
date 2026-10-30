@@ -31,7 +31,7 @@ import kotlinx.serialization.Serializable
     val reservedPct: Int? = null,
     val allowControl: Boolean? = null,
     val maxChargeW: Int? = null,
-    val chargeEffPct: Int? = null,
+    val chargeEffPct: Int? = null, // always stored: null = use the measured efficiency
     val solaxClientId: String = "",
     val solaxClientSecret: String = "",
     val solaxPlantId: String = "",
@@ -46,7 +46,9 @@ import kotlinx.serialization.Serializable
     val reservedPct: Int = DEFAULT_RESERVE,
     val allowControl: Boolean = false,
     val maxChargeW: Int = DEFAULT_MAX_CHARGE_W,
-    val chargeEffPct: Int = DEFAULT_CHARGE_EFF_PCT,
+    val chargeEffPct: Int? = null, // typed in by the owner; null = the measured one (or the default) is used
+    val chargeEffMeasured: Int? = null,
+    val chargeEffDefault: Int = DEFAULT_CHARGE_EFF_PCT,
     val solaxClientId: String = "",
     val solaxPlantId: String = "",
     val solaxHasSecret: Boolean = false,

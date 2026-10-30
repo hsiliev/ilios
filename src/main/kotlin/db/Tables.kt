@@ -42,8 +42,12 @@ object Locations : Table("locations") {
     // power cap (W) of the grid charging programmed into the inverter
     val maxChargeW = integer("max_charge_w").default(DEFAULT_MAX_CHARGE_W)
 
-    // share (%) of the charging power that reaches the battery (the rest is lost); scales charge times and savings
-    val chargeEffPct = integer("charge_eff_pct").default(DEFAULT_CHARGE_EFF_PCT)
+    // share (%) of the charging power that reaches the battery (the rest is lost); scales charge times and savings.
+    // Typed in by the owner; null = use the measured one
+    val chargeEffPct = integer("charge_eff_pct").nullable()
+
+    // the same share measured on the night charges in the stored battery history (see measuredChargeEffPct)
+    val chargeEffMeasured = integer("charge_eff_measured").nullable()
 
     // electricity supplier (key of TARIFFS) for the night-charge advice
     val supplier = varchar("supplier", 20).default(DEFAULT_SUPPLIER)
@@ -160,6 +164,8 @@ object DischargeDays : Table("discharge_days") {
     val dischargeW = double("discharge_w")
     val loadW = double("load_w").nullable() // the home's consumption; null when the inverter history has no such field
     val gridW = double("grid_w").nullable() // power drawn from the grid, positive = import; null when not reported
+    val soc = double("soc").nullable() // battery charge (%), for measuring the charging efficiency
+    val chargeW = double("charge_w").nullable() // battery charging power (W), 0 while discharging
     override val primaryKey = PrimaryKey(locationId, day, t)
 }
 

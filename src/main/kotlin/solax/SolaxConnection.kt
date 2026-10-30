@@ -3,6 +3,7 @@ package ilios.solax
 import ilios.badRequest
 import ilios.db.BatteryDays
 import ilios.db.DischargeDays
+import ilios.db.Locations
 import ilios.db.Produced
 import ilios.db.SolarToday
 import ilios.db.Solax
@@ -58,6 +59,7 @@ object SolaxConnection {
         BatteryDays.deleteWhere { BatteryDays.locationId eq locationId }
         SolarToday.deleteWhere { SolarToday.locationId eq locationId }
         DischargeDays.deleteWhere { DischargeDays.locationId eq locationId }
+        Locations.update({ Locations.id eq locationId }) { it[chargeEffMeasured] = null }
         Solax.update({ Solax.locationId eq locationId }) { it.clearPlantData() }
         Unit
     }
