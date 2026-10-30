@@ -50,7 +50,6 @@ object SolaxRepository {
                     it[Solax.status],
                     it[Solax.batteryStatus].orEmpty(),
                     decodePlants(it[Solax.plants]),
-                    capacityText(plant(id)),
                 )
             }
     }

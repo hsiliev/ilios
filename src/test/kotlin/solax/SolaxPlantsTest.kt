@@ -60,7 +60,7 @@ class SolaxPlantsTest : SolaxFixture() {
         assertFalse(produced.containsKey(today), "today is not final yet, so it is not fetched")
         // the inverter's AC output is kept next to the PV generation: the SolaX app's "Inverter Output" is that figure
         assertEquals(3.0, SolaxReadings.producedAc(loc.id).getValue(today.minusDays(1)))
-        assertContains(status(loc), "произведена енергия до")
+        assertContains(status(loc), "централа")
         assertEquals(today.minusDays(1).toString(), row(loc)[Solax.producedThrough])
         assertEquals("P1", row(loc)[Solax.plantId])
         assertEquals(1, row(loc)[Solax.businessType])

@@ -62,7 +62,7 @@ body{font-size:14px}header{padding:8px 12px}main{padding:10px 8px}
 .card{padding:10px;margin-bottom:10px}.place{padding:0}.place>summary{padding:10px}.place .pbody{padding:0 10px 10px}
 .chips{margin-left:0;width:100%}.chart{min-width:520px}
 .bline{gap:6px}.meter{flex:1 1 100px}
-.fields{grid-template-columns:1fr}.fields .status{width:auto}
+.fields{grid-template-columns:1fr}.fields .status{width:auto}.fields .sp{display:none}
 .row{flex-wrap:wrap}.auth{margin:16px auto}
 button,input,select{min-height:38px}.ib{padding:8px}
 table{display:block;overflow-x:auto}

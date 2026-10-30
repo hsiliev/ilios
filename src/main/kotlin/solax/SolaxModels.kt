@@ -1,6 +1,5 @@
 package ilios.solax
 
-import ilios.report.bg
 import ilios.solax.api.plantsJson
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -36,13 +35,4 @@ class SolaxInfo(
     val status: String,
     val batteryStatus: String,
     val plants: List<PlantOption>,
-    val batteryInfo: String = "", // the battery capacity figure from SolaX
 )
-
-/** Battery capacity figure from device rated capacity. */
-internal fun capacityText(p: SolaxPlant?): String {
-    if (p == null) return ""
-    val bg = java.util.Locale.forLanguageTag("bg")
-    fun kwh(v: Double) = "%.1f".format(bg, v) + " kWh"
-    return p.deviceKwh?.let { "Капацитет на батерията: ${kwh(it)}" } ?: ""
-}

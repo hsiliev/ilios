@@ -4,7 +4,6 @@ import ilios.HttpError
 import ilios.MILLIS
 import ilios.auth.AuthService
 import ilios.badRequest
-import ilios.db.DEFAULT_CHARGE_EFF_PCT
 import ilios.db.Loc
 import ilios.db.Locations
 import ilios.db.MAX_CHARGE_EFF_PCT
@@ -51,9 +50,9 @@ private const val MAX_COUNTRY = 80
 private fun locationOut(r: ResultRow, info: SolaxInfo?) = LocationOut(
     r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar], r[Locations.supplier],
     r[Locations.reservedPct], r[Locations.allowControl], r[Locations.maxChargeW],
-    r[Locations.chargeEffPct], r[Locations.chargeEffMeasured], DEFAULT_CHARGE_EFF_PCT,
+    r[Locations.chargeEffPct], r[Locations.chargeEffMeasured],
     info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(),
-    info?.batteryStatus.orEmpty(), info?.batteryInfo.orEmpty(), info?.plants.orEmpty(),
+    info?.batteryStatus.orEmpty(), info?.plants.orEmpty(),
 )
 
 /** The signed-in user's places in their own order. */

@@ -67,13 +67,7 @@ internal object PlantSync {
         val period = periodToFetch(loc, row, now, record.wiped)
         val (type, fresh) = readProduction(session, record, period)
         store(loc.id, record, type, period, fresh, now)
-        val through = if (period.hasDays) {
-            period.end
-        } else {
-            row[Solax.producedThrough]?.let(LocalDate::parse)
-                ?: period.end
-        }
-        return summary(record, through)
+        return summary(record)
     }
 
     /** Sets the status text of a finished sync and when the next one may run. */
@@ -253,16 +247,13 @@ internal object PlantSync {
         }
     }
 
-    private fun summary(record: PlantRecord, through: LocalDate): String {
+    private fun summary(record: PlantRecord): String {
         val bg = Locale.forLanguageTag("bg")
         val specs = listOfNotNull(
             record.pvKwp?.takeIf { it > 0 }?.let { "панели ${"%.1f".format(bg, it)} kWp" },
             record.deviceKwh?.takeIf { it > 0 }?.let { "батерия ${"%.1f".format(bg, it)} kWh" },
         )
         val specText = if (specs.isEmpty()) "" else " (${specs.joinToString(", ")})"
-        return "централа „${record.plantName ?: record.plantId}“$specText, произведена енергия до ${"%02d.%02d".format(
-            through.dayOfMonth,
-            through.monthValue,
-        )}"
+        return "централа „${record.plantName ?: record.plantId}“$specText"
     }
 }

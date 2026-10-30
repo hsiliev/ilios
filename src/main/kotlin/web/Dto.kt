@@ -1,6 +1,5 @@
 package ilios.web
 
-import ilios.db.DEFAULT_CHARGE_EFF_PCT
 import ilios.db.DEFAULT_MAX_CHARGE_W
 import ilios.db.DEFAULT_RESERVE
 import ilios.db.DEFAULT_SUPPLIER
@@ -48,13 +47,11 @@ import kotlinx.serialization.Serializable
     val maxChargeW: Int = DEFAULT_MAX_CHARGE_W,
     val chargeEffPct: Int? = null, // typed in by the owner; null = the measured one (or the default) is used
     val chargeEffMeasured: Int? = null,
-    val chargeEffDefault: Int = DEFAULT_CHARGE_EFF_PCT,
     val solaxClientId: String = "",
     val solaxPlantId: String = "",
     val solaxHasSecret: Boolean = false,
     val solaxStatus: String = "",
     val solaxBatteryStatus: String = "",
-    val solaxBatteryInfo: String = "",
     val solaxPlants: List<PlantOption> = emptyList(), // the secret is never sent back
 )
 

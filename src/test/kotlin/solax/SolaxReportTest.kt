@@ -27,8 +27,6 @@ class SolaxReportTest : SolaxFixture() {
         assertEquals(15.0, p.batteryKwh, "the devices' ratedCapacity figure is used for battery capacity")
         assertEquals(1, batteryDeviceCalls(seen).size)
         assertEquals("1", batteryDeviceCalls(seen).single().url.parameters["businessType"])
-        val info = SolaxRepository.infos(listOf(loc.id)).getValue(loc.id).batteryInfo
-        assertContains(info, "15,0 kWh")
         assertContains(
             status(loc),
             "батерия 15,0 kWh",
