@@ -112,4 +112,5 @@ class NightPlan(
     val reached: Boolean,
     val chargeUntil: Long? = null,
     val control: String? = null,
+    val startBy: Long? = null,
 )

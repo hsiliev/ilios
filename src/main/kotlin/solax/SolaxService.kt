@@ -56,13 +56,8 @@ class SolaxService(http: HttpClient, baseUrl: String = solaxBaseUrl()) {
     suspend fun syncLoop() {
         while (true) {
             try {
-                val places =
-                    transaction {
-                        (Locations innerJoin Solax).selectAll().where { Locations.solar eq true }.map(::locOf)
-                    }
-                for (loc in places) {
+                for (loc in solarPlaces()) {
                     syncIfDue(loc)
-                    readBatteryIfDue(loc)
                     refreshTodayIfDue(loc)
                     batteryHistoryIfDue(loc)
                     dischargeHistoryIfDue(loc)
@@ -74,6 +69,24 @@ class SolaxService(http: HttpClient, baseUrl: String = solaxBaseUrl()) {
             }
             delay(CHECK_EVERY)
         }
+    }
+
+    /** Runs until cancelled: reads the battery of the solar places whose reading is due (see [batterySlot]). */
+    suspend fun batteryLoop() {
+        while (true) {
+            try {
+                for (loc in solarPlaces()) readBatteryIfDue(loc)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                System.err.println("SolaX battery loop error: ${e.message}")
+            }
+            delay(BATTERY_CHECK_EVERY)
+        }
+    }
+
+    private fun solarPlaces() = transaction {
+        (Locations innerJoin Solax).selectAll().where { Locations.solar eq true }.map(::locOf)
     }
 
     /**

@@ -51,7 +51,7 @@ private fun reportOf(loc: Loc, weather: WeatherService): Report {
         batteryPrev = solar(emptyList()) { sx.today(loc.id, today.minusDays(1)) },
         load = solar(emptyMap()) { sx.consumption(loc.id) },
         dischargeProfile = solar(emptyList()) { sx.dischargeProfile(loc.id, today) },
-        loadHistory = solar(emptyList()) { sx.loadDays(loc.id, today) },
+        loadByDay = solar(emptyMap()) { sx.loadByDay(loc.id, today) },
         plans = solar(emptyMap()) { nightPlans(loc.id) },
         badCloud = solar(emptyMap()) { sx.badProduced(loc.id) },
     )

@@ -11,7 +11,7 @@ import java.util.Locale
 
 /**
  * The battery's state of charge, read through the plant's inverters and kept in the database: at most hourly, every
- * 30 minutes at night.
+ * 30 minutes at night, every 5 minutes around the planned start and end of the night charge.
  */
 internal class BatteryReader(private val client: SolaxClient, private val today: TodayCache) {
     private val stamp = DateTimeFormatter.ofPattern("dd.MM HH:mm")
@@ -44,6 +44,7 @@ internal class BatteryReader(private val client: SolaxClient, private val today:
             },
         ) {
             val soc = read(link, now.toEpochMilli())
+            if (soc != null) SolaxRepository.update(loc.id) { it[Solax.batteryTryAt] = null } // only failures back off
             SolaxRepository.setBatteryStatus(loc.id, statusText(soc, now.atZone(ZoneId.of(loc.tz)).format(stamp)))
             today.cache(loc, now)
         }
@@ -64,7 +65,8 @@ internal class BatteryReader(private val client: SolaxClient, private val today:
     private fun isDue(link: SolaxLink, now: Instant): Boolean {
         val readAt = link.row[Solax.batteryReadAt]
         val tryAt = link.row[Solax.batteryTryAt]
-        return (readAt == null || readAt < batterySlot(now, link.zone).toEpochMilli()) &&
+        val slot = batterySlot(now, link.zone, SolaxRepository.chargeTimes(link.loc.id))
+        return (readAt == null || readAt < slot.toEpochMilli()) &&
             (tryAt == null || tryAt <= now.toEpochMilli())
     }
 

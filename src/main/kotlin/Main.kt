@@ -77,6 +77,7 @@ fun Application.module() {
 
     launch { weather.refreshLoop() }
     launch { solax.syncLoop() }
+    launch { solax.batteryLoop() }
     launch { planner.loop() }
 
     routing {

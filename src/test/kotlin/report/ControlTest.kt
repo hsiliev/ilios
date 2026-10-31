@@ -64,7 +64,7 @@ class ControlTest {
     }
 
     /** A connected place with management enabled, a known plant and one inverter. */
-    private fun place(maxChargeW: Int = DEFAULT_MAX_CHARGE_W, reservedPct: Int = 10, chargeEffPct: Int = 100): Loc {
+    private fun place(maxChargeW: Int = DEFAULT_MAX_CHARGE_W, reservedPct: Int = 10, chargeEff: Int = 100): Loc {
         initDb(tempDbPath())
         val id = transaction {
             val user = Users.insert {
@@ -81,7 +81,7 @@ class ControlTest {
                 it[allowControl] = true
                 it[Locations.maxChargeW] = maxChargeW
                 it[Locations.reservedPct] = reservedPct
-                it[Locations.chargeEffPct] = chargeEffPct
+                it[Locations.chargeEffMeasured] = chargeEff
             }[Locations.id]
         }
         assertTrue(SolaxConnection.configure(id, "client-1", "very-secret", ""))
@@ -152,7 +152,7 @@ class ControlTest {
     }
 
     @Test fun `only the efficiency share of the power reaches the battery`() = runBlocking<Unit> {
-        val loc = place(maxChargeW = 2000, chargeEffPct = 70)
+        val loc = place(maxChargeW = 2000, chargeEff = 70)
         val (svc, seen) = service { answer(it) }
         val running = plan(now.toInstant().toEpochMilli() + 3_600_000)
         planner(svc).control(loc, running, plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
@@ -160,17 +160,33 @@ class ControlTest {
         assertEquals(10_345, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
     }
 
-    @Test fun `charging waits so that it ends shortly before the day zone`() = runBlocking<Unit> {
+    @Test fun `charging waits only while the next reading is still in time`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
-        val p = planner(svc)
-        val early = at("2026-12-01", "04:40") // the charge has to start at 04:54
-        assertEquals(null, p.control(loc, null, plant(20.0), 60.0, false, early, early.toLocalDate(), 7).first)
+        val early = at("2026-12-01", "04:20") // the charge has to start by 04:54, the next reading is 04:50
+        assertEquals(
+            null,
+            planner(svc).control(loc, null, plant(20.0), 60.0, false, early, early.toLocalDate(), 7).first,
+        )
         assertTrue(commands(seen).isEmpty())
-        val late = at("2026-12-01", "04:57") // the first reading after that: a bit late, so the timer is cut at 06:55
+    }
+
+    @Test fun `charging starts at the last reading before it has to`() = runBlocking<Unit> {
+        val loc = place(maxChargeW = 2000)
+        val (svc, seen) = service { answer(it) }
+        val reading = at("2026-12-01", "04:30") // the next reading (05:00) would be after the latest start, 04:54
+        val (until, _) = planner(svc).control(loc, null, plant(20.0), 60.0, false, reading, reading.toLocalDate(), 7)
+        assertEquals(7260, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+        assertEquals(reading.toInstant().toEpochMilli() + 7_260_000, until)
+    }
+
+    @Test fun `a late first reading cuts the timer at the end`() = runBlocking<Unit> {
+        val loc = place(maxChargeW = 2000)
+        val (svc, seen) = service { answer(it) }
+        val late = at("2026-12-01", "04:57") // after the latest start: a bit late, so the timer is cut at 06:55
         assertEquals(
             at("2026-12-01", "06:55").toInstant().toEpochMilli(),
-            p.control(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7).first,
+            planner(svc).control(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7).first,
         )
         assertEquals(7080, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
     }

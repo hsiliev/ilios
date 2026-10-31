@@ -38,7 +38,7 @@ fun nightPlans(locationId: Long): Map<LocalDate, NightPlan> = transaction {
             it[NightPlans.solarKwh], it[NightPlans.totalKwh],
             it[NightPlans.targetSoc], it[NightPlans.sunAt], it[NightPlans.stopBy], it[NightPlans.socNow],
             it[NightPlans.reached],
-            it[NightPlans.chargeUntil], it[NightPlans.control],
+            it[NightPlans.chargeUntil], it[NightPlans.control], it[NightPlans.chargeFrom],
         )
     }
 }
@@ -86,7 +86,7 @@ class NightPlanner(private val weather: WeatherService, solax: SolaxService) {
             } catch (e: Exception) {
                 System.err.println("Night plan loop error: ${e::class.simpleName}")
             }
-            delay(10.minutes)
+            delay(5.minutes)
         }
     }
 
@@ -113,7 +113,14 @@ class NightPlanner(private val weather: WeatherService, solax: SolaxService) {
         val targetSoc =
             nightTargetSoc(c, forecast.pattern, tTo * 12, (CHARGE_END_BEFORE_MS / SLOT_MS).toInt(), reading.capacityKwh)
         val reached = c.totalKwh <= 0 || reading.soc >= targetSoc
-        val (chargeUntil, control) = inverter.control(loc, existing, plant, targetSoc, reached, local, target, tTo)
+        val gap = (CHARGE_END_BEFORE_MS / SLOT_MS).toInt()
+        val stops = chargeStops(SolaxReadings.loadByDay(loc.id, local.toLocalDate()), tTo * SLOTS_PER_HOUR - gap)
+        val (chargeUntil, control) =
+            inverter.control(loc, existing, plant, targetSoc, reached, local, target, tTo, stops)
+        // the battery is read every 5 minutes around the latest start (see batterySlot)
+        val startBy = inverter.latestStart(loc, plant, targetSoc, chargeEnd(target, tTo, zone), stops).takeIf {
+            !reached
+        }
         val at = now.toEpochMilli()
         val plan = NightPlan(
             target.toString(), existing?.foundAt ?: at, at, c.dayStartKwh, c.solarKwh, c.totalKwh, targetSoc, c.sunAt,
@@ -121,7 +128,7 @@ class NightPlanner(private val weather: WeatherService, solax: SolaxService) {
                 tTo,
             ),
             reading.soc, reached,
-            chargeUntil, control,
+            chargeUntil, control, startBy,
         )
         store(loc.id, plan, local.toLocalDate())
     }
@@ -196,6 +203,7 @@ class NightPlanner(private val weather: WeatherService, solax: SolaxService) {
                 it[reached] = plan.reached
                 it[chargeUntil] = plan.chargeUntil
                 it[control] = plan.control
+                it[chargeFrom] = plan.startBy
             }
             NightPlans.deleteWhere {
                 NightPlans.locationId eq locationId and

@@ -25,6 +25,16 @@ import kotlin.test.assertTrue
 /** Production sync, back-offs and the battery reading schedule. */
 class SolaxSyncTest : SolaxFixture() {
     @Test
+    fun aSuccessfulReadingDoesNotHoldBackTheNextOneAtNight() = runBlocking {
+        val (loc, svc, seen) = connected("Europe/Sofia")
+        svc.readBatteryIfDue(loc, at("2026-12-01T20:05:00Z")) // 22:05 local, winter: the night zone
+        svc.readBatteryIfDue(loc, at("2026-12-01T20:20:00Z")) // the same 30-minute slot
+        assertEquals(1, paths(seen, "/realtime_data").size)
+        svc.readBatteryIfDue(loc, at("2026-12-01T20:35:00Z")) // the next slot, within the hour
+        assertEquals(2, paths(seen, "/realtime_data").size)
+    }
+
+    @Test
     fun theBatteryIsReadRightAfterConnectingAndThenHourly() = runBlocking {
         val (loc, svc, seen) = connected()
 

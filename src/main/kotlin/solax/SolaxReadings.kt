@@ -95,7 +95,11 @@ object SolaxReadings {
      * The consumption (W) per 5-minute slot of each of the last [DISCHARGE_DAYS] finished days that have consumption
      * data, oldest first.
      */
-    fun loadDays(locationId: Long, today: LocalDate): List<Map<String, Double>> = transaction {
+    fun loadDays(locationId: Long, today: LocalDate): List<Map<String, Double>> =
+        loadByDay(locationId, today).values.toList()
+
+    /** The same consumption keyed by day, oldest first. */
+    fun loadByDay(locationId: Long, today: LocalDate): Map<LocalDate, Map<String, Double>> = transaction {
         val from = today.minusDays(DISCHARGE_DAYS.toLong()).toString()
         DischargeDays.selectAll().where {
             DischargeDays.locationId eq locationId and
@@ -107,8 +111,8 @@ object SolaxReadings {
                 it[DischargeDays.day]
             }, { it[DischargeDays.t] to it[DischargeDays.loadW]!! })
             .toSortedMap()
-            .values
-            .map { it.toMap() }
+            .map { (day, points) -> LocalDate.parse(day) to points.toMap() }
+            .toMap()
     }
 
     /** The stored 5-minute battery charge and charging power of the past days, for measuring the efficiency. */

@@ -120,8 +120,10 @@ class EstimateTest {
         val plain = estimateDay(now, 0.0, 10.0, pattern, 0, end) { 0.0 }!!
         val start = plannedChargeStart(plain, now, end, 10.0, 60.0, 2000.0, 0.7, false)!!
         assertTrue(start > now && start < end, "waits until it has to start: $start")
-        // 6 kWh at 2 kW x 70 % ends at the end slot
-        assertEquals(end.toDouble(), start + 6.0 / (2.0 * 0.7) * 12, 1.0)
+        // 6 kWh at 2 kW x 70 % takes 51.4 slots; it starts at the last reading (every 6 slots) that ends in time
+        val latest = end - 6.0 / (2.0 * 0.7) * 12
+        assertEquals(0, start % 6)
+        assertTrue(start <= latest && start + 6 > latest, "start $start, latest $latest")
 
         val e = estimateDay(now, 0.0, 10.0, pattern, 0, end, PlannedCharge(start, end, 2000.0, 60.0, 0.7)) { 0.0 }!!
         val charging = e.points.filter { it.chargeW > 0 }

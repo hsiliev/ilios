@@ -1,7 +1,9 @@
 package ilios.solax
 
+import ilios.db.NightPlans
 import ilios.db.Solax
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.statements.UpdateStatement
@@ -23,6 +25,14 @@ object SolaxRepository {
         transaction { Solax.selectAll().where { Solax.locationId eq locationId }.singleOrNull() }
 
     // ---- database-only reads and configuration ----
+
+    /** The latest start and the end (epoch ms) of the charge in the last night plans (read often around them). */
+    fun chargeTimes(locationId: Long): List<Long> = transaction {
+        NightPlans.selectAll().where { NightPlans.locationId eq locationId }
+            .orderBy(NightPlans.day, SortOrder.DESC)
+            .limit(2)
+            .flatMap { listOfNotNull(it[NightPlans.chargeFrom], it[NightPlans.chargeUntil]) }
+    }
 
     fun plant(locationId: Long): SolaxPlant? = transaction {
         Solax.selectAll().where { Solax.locationId eq locationId }.singleOrNull()

@@ -44,7 +44,6 @@ object Locations : Table("locations") {
 
     // share (%) of the charging power that reaches the battery (the rest is lost); scales charge times and savings.
     // Typed in by the owner; null = use the measured one
-    val chargeEffPct = integer("charge_eff_pct").nullable()
 
     // the same share measured on the night charges in the stored battery history (see measuredChargeEffPct)
     val chargeEffMeasured = integer("charge_eff_measured").nullable()
@@ -191,6 +190,9 @@ object NightPlans : Table("night_plans") {
     // no charge is running
     val chargeUntil = long("charge_until").nullable()
     val control = varchar("control", 200).nullable() // outcome of the last attempt to control the inverter
+
+    // epoch ms of the latest moment the charge can start and still end in time; the battery is read often around it
+    val chargeFrom = long("charge_from").nullable()
     override val primaryKey = PrimaryKey(locationId, day)
 }
 

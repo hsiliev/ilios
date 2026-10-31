@@ -29,6 +29,7 @@ private class EstimateInput(
     val produced: Map<LocalDate, Double>,
     val load: Map<LocalDate, Double>,
     val loadHistory: List<Map<String, Double>>,
+    val loadByDay: Map<LocalDate, Map<String, Double>>,
     val plans: Map<LocalDate, NightPlan>,
     val kwp: Double,
     val ratio: Double,
@@ -54,7 +55,8 @@ fun buildReport(
     batteryPrev: List<TodayPoint> = emptyList(),
     load: Map<LocalDate, Double> = emptyMap(),
     dischargeProfile: List<DischargePoint> = emptyList(),
-    loadHistory: List<Map<String, Double>> = emptyList(),
+    loadByDay: Map<LocalDate, Map<String, Double>> = emptyMap(),
+    loadHistory: List<Map<String, Double>> = loadByDay.values.toList(),
     plans: Map<LocalDate, NightPlan> = emptyMap(),
     badCloud: Map<LocalDate, Double> = emptyMap(),
 ): Report {
@@ -69,7 +71,7 @@ fun buildReport(
     val estimate = battery?.let {
         estimateRestOfToday(
             EstimateInput(
-                loc, days, today, intraday, it, batteryToday, produced, load, loadHistory, plans, kwp, ratio,
+                loc, days, today, intraday, it, batteryToday, produced, load, loadHistory, loadByDay, plans, kwp, ratio,
                 pvForecast, pvForecastNext,
             ),
         )
@@ -281,6 +283,7 @@ private fun plannedChargeOf(
             loc.maxChargeW.toDouble(),
             loc.chargeEfficiency,
             running,
+            chargeStops(i.loadByDay, w.end % SLOTS_PER_DAY),
         )
             ?: return null
     return PlannedCharge(start, w.end, loc.maxChargeW.toDouble(), target, loc.chargeEfficiency)

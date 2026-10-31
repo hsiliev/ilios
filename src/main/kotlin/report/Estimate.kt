@@ -6,6 +6,7 @@ import ilios.PERCENT
 import ilios.SLOTS_PER_DAY
 import ilios.SLOT_MINUTES
 import ilios.db.DEFAULT_RESERVE
+import ilios.solax.BATTERY_NIGHT_MINUTES
 import kotlinx.serialization.Serializable
 import kotlin.math.round
 
@@ -54,10 +55,14 @@ class PlannedCharge(
     fun targetKwh(capacityKwh: Double) = targetSoc / PERCENT * capacityKwh
 }
 
+private const val READING_SLOTS = BATTERY_NIGHT_MINUTES / SLOT_MINUTES // battery readings (and decisions) at night
+
 /**
- * The slot at which the planned charge starts, as the inverter control does: as late as possible so that it still
+ * The slot at which the planned charge starts, as the inverter control does: at the last battery reading from which
+ * the charge still
  * reaches [targetSoc] before
- * [endSlot] (the missing energy ÷ (power × [efficiency])), or at once ([nowSlot]) when a charge is already running.
+ * [endSlot] (the missing energy ÷ (power × [efficiency]), longer by the [stops] the house load made in past nights), or
+ * at once ([nowSlot]) when a charge is already running.
  * Null when nothing is missing.
  * [plain] is the estimate without the charge, running at least to [endSlot].
  */
@@ -70,14 +75,16 @@ fun plannedChargeStart(
     powerW: Double,
     efficiency: Double,
     running: Boolean,
+    stops: ChargeStops = ChargeStops.NONE,
 ): Int? {
     if (endSlot <= nowSlot || batteryKwh <= 0 || powerW <= 0) return null
     return (nowSlot until endSlot).firstOrNull { s ->
         val soc = plain.points.getOrNull(s - nowSlot)?.soc ?: return@firstOrNull false
         val missingKwh = (targetSoc - soc) / 100 * batteryKwh
-        val slots = missingKwh / (powerW / 1000 * efficiency) * 12 // hours -> 5-minute slots
+        val slots = stops.slots(missingKwh, powerW, efficiency)
         // missingKwh <= 0: still above the target, the battery has to drain first
-        missingKwh > 0 && (running || s + slots >= endSlot)
+        // not running: only at a battery reading, the last one before the charge would be too late to finish
+        missingKwh > 0 && (running || s % READING_SLOTS == 0 && s + READING_SLOTS + slots > endSlot)
     }
 }
 
