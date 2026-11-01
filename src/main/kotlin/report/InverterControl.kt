@@ -3,7 +3,7 @@ package ilios.report
 import ilios.MILLIS
 import ilios.MINUTES_PER_HOUR
 import ilios.db.Loc
-import ilios.solax.BATTERY_NIGHT_MINUTES
+import ilios.solax.BATTERY_FAST_MINUTES
 import ilios.solax.SolaxPlant
 import ilios.solax.SolaxService
 import ilios.solax.api.SolaxError
@@ -18,8 +18,8 @@ private const val HALF_MINUTE = 30
 
 internal const val CHARGE_END_BEFORE_MS = 5 * 60_000L // the charge should end this long before the day zone starts
 
-/** The planner decides at the battery readings, so a charge that is not started now waits this long. */
-internal const val NEXT_READING_MS = BATTERY_NIGHT_MINUTES * 60_000L
+/** Readings are 5 minutes apart around the latest start (fast window), so a charge not started now waits this long. */
+internal const val NEXT_READING_MS = BATTERY_FAST_MINUTES * 60_000L
 private const val MIN_CHARGE_SECONDS = 120 // nothing worthwhile is left before the day zone when less than this remains
 private const val TIMER_EXTRA_SECONDS = 60L
 private const val STATUS_LIMIT = 200
@@ -87,7 +87,7 @@ internal class InverterControl(private val solax: SolaxService) {
      * The timer of the charge in seconds, or null when none should be sent now: no reading, nothing worthwhile left
      * before the day zone, or
      * the charge does not have to start yet. Charging early would be drained by the house again, so it waits as long
-     * as the next reading (30 minutes at night) is still in time and starts at the last reading before it has to; a
+     * as the next reading (5 min) is still in time and starts at the last reading before it has to; a
      * reading that comes after that point starts a little late and the timer is capped at the end.
      */
     private fun timerSeconds(

@@ -163,7 +163,7 @@ class ControlTest {
     @Test fun `charging waits only while the next reading is still in time`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
-        val early = at("2026-12-01", "04:20") // the charge has to start by 04:54, the next reading is 04:50
+        val early = at("2026-12-01", "04:45") // the charge has to start by 04:54, the next reading is 04:50
         assertEquals(
             null,
             planner(svc).control(loc, null, plant(20.0), 60.0, false, early, early.toLocalDate(), 7).first,
@@ -174,7 +174,7 @@ class ControlTest {
     @Test fun `charging starts at the last reading before it has to`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
-        val reading = at("2026-12-01", "04:30") // the next reading (05:00) would be after the latest start, 04:54
+        val reading = at("2026-12-01", "04:50") // the next reading (04:55) would be after the latest start, 04:54
         val (until, _) = planner(svc).control(loc, null, plant(20.0), 60.0, false, reading, reading.toLocalDate(), 7)
         assertEquals(7260, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
         assertEquals(reading.toInstant().toEpochMilli() + 7_260_000, until)

@@ -6,7 +6,7 @@ import ilios.PERCENT
 import ilios.SLOTS_PER_DAY
 import ilios.SLOT_MINUTES
 import ilios.db.DEFAULT_RESERVE
-import ilios.solax.BATTERY_NIGHT_MINUTES
+import ilios.solax.BATTERY_FAST_MINUTES
 import kotlinx.serialization.Serializable
 import kotlin.math.round
 
@@ -55,7 +55,7 @@ class PlannedCharge(
     fun targetKwh(capacityKwh: Double) = targetSoc / PERCENT * capacityKwh
 }
 
-private const val READING_SLOTS = BATTERY_NIGHT_MINUTES / SLOT_MINUTES // battery readings (and decisions) at night
+private const val READING_SLOTS = BATTERY_FAST_MINUTES / SLOT_MINUTES // readings near the latest start
 
 /**
  * The slot at which the planned charge starts, as the inverter control does: at the last battery reading from which
