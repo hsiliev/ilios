@@ -24,15 +24,16 @@ private const val SLOT_HOURS = SLOT_MINUTES.toDouble() / MINUTES_PER_HOUR
  * How long the charge takes when the house load interrupts it, learnt from the past nights: [nights] hold the
  * consumption (W) of the slots before the charge's end, the slot just before it first, one array per night.
  * Each night is replayed backwards from the end with the charge cut as the model says ([CHARGE_MODEL_TOTAL_W]); the
- * second longest time counts, so one unusual night does not set the start but the recurring peaks do.
+ * median time counts: the charge is planned for a typical night, so it ends close to the end of the night zone and
+ * a worse night ends a few percent short (the timer is capped at the end) instead of the battery sitting full.
  */
 class ChargeStops(private val nights: List<DoubleArray>) {
     /** The 5-minute slots before the end that the charge needs to store [missingKwh]. */
     fun slots(missingKwh: Double, powerW: Double, efficiency: Double): Double {
         val plain = missingKwh / (powerW / MILLIS * efficiency) / SLOT_HOURS
         if (missingKwh <= 0 || nights.size < MIN_NIGHTS) return plain
-        val longest = nights.map { slotsOn(it, missingKwh, powerW, efficiency) }.sortedDescending()
-        return max(plain, longest[1])
+        val times = nights.map { slotsOn(it, missingKwh, powerW, efficiency) }.sorted()
+        return max(plain, times[times.size / 2])
     }
 
     private fun slotsOn(night: DoubleArray, missingKwh: Double, powerW: Double, efficiency: Double): Double {

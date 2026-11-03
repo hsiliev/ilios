@@ -32,7 +32,7 @@ class ChargeStopsTest {
     }
 
     @Test
-    fun theSecondLongestNightCountsSoOneOddNightDoesNot() {
+    fun theMedianNightCountsSoOneOddNightDoesNot() {
         val busy = DoubleArray(144) { if (it < 12) 7000.0 else 0.0 } // nothing charges in the last hour
         val odd = ChargeStops(listOf(night(0.0), night(0.0), night(0.0), busy))
         assertEquals(12.0, odd.slots(2.0, 2000.0, 1.0), 1e-9)
