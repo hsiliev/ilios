@@ -158,19 +158,27 @@ document.addEventListener('pointerleave',()=>{if(callout)callout.hidden=true});
 // the battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes): the last 12 hours
 // (yesterday's points are kept for this), the current time in the middle, and the forecast and estimate for the next 12
 export const NIGHT_FROM=22,NIGHT_TO=6; // cheap night tariff hours (local time)
-export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zone=[NIGHT_FROM,NIGHT_TO],prev=[],fcNext=[]){
+export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zone=[NIGHT_FROM,NIGHT_TO],prev=[],fcNext=[],todayIso=''){
   const [NF,NT]=zone;
-  const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,n=288,step=iw/n,ticks=5;
+  const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,ticks=5;
   if(!now){const d=new Date();now=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
-  const ws=winStart(now),inWin=m=>m>=ws&&m<ws+1440,at=m=>(m-ws)/5,X=m=>L+iw*(m-ws)/1440;
-  const hist=[...prev.map(p=>({...p,m:tmin(p.t,-1)})),...pts.map(p=>({...p,m:tmin(p.t,0)}))].filter(p=>inWin(p.m));
+  // the window runs from an hour before the battery was last full to an hour after the estimate has it full again
+  // (without such points: 12 hours back / ahead); at most from yesterday's midnight to 24 hours ahead
+  const nm=nowMin(now),all=[...prev.map(p=>({...p,m:tmin(p.t,-1)})),...pts.map(p=>({...p,m:tmin(p.t,0)}))];
+  let eo=0,et='';
+  const epAll=estimate?.points?.length>0?estimate.points.map(p=>{if(et&&p.t<et)eo++;et=p.t;return{...p,m:tmin(p.t,eo)}}).filter(p=>p.m>nm):[];
+  const FULL=99,fullAt=all.filter(p=>p.soc>=FULL).map(p=>p.m),lastFull=fullAt.length?Math.max(...fullAt):nm-720;
+  const lowAt=epAll.findIndex(p=>p.soc<FULL),peak=Math.max(0,...epAll.map(p=>p.soc)),cur=all.filter(p=>p.soc!=null).pop()?.soc??0;
+  const nextFull=lowAt<0?null:epAll.slice(lowAt).find(p=>p.soc>=Math.min(FULL,peak-.5))?.m;
+  const ws=Math.max(-1440,Math.floor((lastFull-60)/5)*5),we=Math.min(nm+1440,Math.max(ws+180,Math.ceil(((nextFull&&peak>cur+1?nextFull:nm+720)+60)/5)*5)),span=we-ws;
+  const n=span/5,step=iw/n,inWin=m=>m>=ws&&m<we,at=m=>(m-ws)/5,X=m=>L+iw*(m-ws)/span;
+  const hist=all.filter(p=>inWin(p.m));
   const last=hist.length?hist[hist.length-1].m:nowMin(now);
   const future=[...fc.map(p=>({...p,m:tmin(p.t,0)})),...fcNext.map(p=>({...p,m:tmin(p.t,1)}))].filter(p=>p.m>last&&inWin(p.m)&&p.pvW>0);
   // the server's 5-minute estimate (previous days' consumption pattern x the weather x the solar forecast) runs 12 hours ahead, past midnight
   // (its times wrap, so the day offset grows when a time is earlier than the one before); without consumption data there is no grid estimate
   const byServer=estimate?.points?.length>0,ew=byServer?1:3;
-  let eo=0,et='';
-  const ep=byServer?estimate.points.map(p=>{if(et&&p.t<et)eo++;et=p.t;return{...p,m:tmin(p.t,eo)}}).filter(p=>p.m>last&&inWin(p.m)):[];
+  const ep=byServer?epAll.filter(p=>p.m>last&&inWin(p.m)):[];
   const est=ep.map(p=>({m:p.m,w:p.gridW,c:p.chargeW||0}));
   const negKw=p=>p.gridW>0?p.gridW/1000:0; // below the axis: power drawn from the grid
   const maxKw=Math.max(0.5,...hist.map(p=>(p.pvW||0)/1000),...future.map(p=>p.pvW/1000))*1.1,kstep=stepFor(maxKw,ticks,[.5,1,2,5,10,20,50,100]);
@@ -186,13 +194,16 @@ export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zon
     o+=`<text transform="translate(12 ${midY+ihB/2}) rotate(-90)" class="tx" text-anchor="middle">Мрежа (kW)</text>`}
   o+=`<text transform="translate(12 ${T+ihT/2}) rotate(-90)" class="tx" text-anchor="middle">Мощност на панелите (kW)</text><text transform="translate(${W-8} ${T+ihT/2}) rotate(90)" class="tx" text-anchor="middle">Заряд на батерията (%)</text>`;
   // tariff zones: night (NF-NT, cheap energy) is shaded, the day zone starts when it ends; yesterday's, today's and tomorrow's zones are cut to the window
-  for(const d of [-1,0,1]){
+  for(let d=-1;d<=2;d++){
     for(const [a,b] of [[d*1440,d*1440+NT*60],[d*1440+NF*60,d*1440+1440]]){
-      const x1=X(Math.max(a,ws)),x2=X(Math.min(b,ws+1440));
+      const x1=X(Math.max(a,ws)),x2=X(Math.min(b,we));
       if(x2-x1>0)o+=`<rect x="${x1}" y="${T}" width="${x2-x1}" height="${ih}" class="nightz"/>`+(x2-x1>90?`<text x="${(x1+x2)/2}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text>`:'')}
     const dz=d*1440+NT*60;
     if(inWin(dz))o+=`<line x1="${X(dz)}" x2="${X(dz)}" y1="${T}" y2="${T+ih}" class="sep"/><text x="${X(dz)+4}" y="${T+12}" class="tx">дневна енергия →</text>`}
-  for(let m=Math.ceil(ws/180)*180;m<=ws+1440;m+=180){const xx=X(m);o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${hm(m)}</text>`}
+  const tk=span>2160?360:180;
+  for(let m=Math.ceil(ws/tk)*tk;m<=we;m+=tk){const xx=X(m);o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${hm(m)}</text>`;
+    // the date under each midnight
+    if(todayIso&&m%1440===0){const d=new Date(todayIso+'T12:00:00');d.setDate(d.getDate()+m/1440);o+=`<text x="${xx}" y="${T+ih+30}" class="tx b" text-anchor="middle">${d.getDate()}.${d.getMonth()+1}</text>`}}
   hist.forEach(p=>{const v=(p.pvW||0)/1000;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.m)+step/2-bw/2}" y="${yk(v)}" width="${bw}" height="${midY-yk(v)}" class="kprod"/>`}});
   hist.forEach(p=>{const v=negKw(p);if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.m)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});
   // pale bars: Open-Meteo's forecast (15-minute steps) for the next hours
@@ -204,7 +215,7 @@ export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zon
   const s=hist.filter(p=>p.soc!=null);
   if(s.length)o+=`<polyline points="${s.map(p=>(L+step*(at(p.m)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc"/>`;
   const nx=X(nowMin(now));
-  o+=`<line x1="${nx}" x2="${nx}" y1="${T}" y2="${T+ih}" class="now"/><text x="${nx+4}" y="${T+ih-6}" class="tx b">сега ${now}</text>`;
+  if(inWin(nowMin(now)))o+=`<line x1="${nx}" x2="${nx}" y1="${T}" y2="${T+ih}" class="now"/><text x="${nx+4}" y="${T+ih-6}" class="tx b">сега ${now}</text>`;
   hist.forEach(p=>o+=`<rect x="${L+step*at(p.m)}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${hm(p.m)}${p.pvW!=null?'|панели '+num(p.pvW/1000,2)+' kW':''}${p.gridW>0?'|от мрежата '+num(p.gridW/1000,2)+' kW':''}${p.soc!=null?'|батерия '+num(p.soc,0)+'%':''}"/>`);
   return legend([[sw('l','background:var(--cbat)'),'Заряд на батерията (%)'],[sw('b','background:var(--kprod)'),'Мощност на панелите (kW)'],[sw('b','background:var(--kbat)'),'Изтеглено от мрежата (kW)']])+shell(W,H,'Батерия',o);
 }

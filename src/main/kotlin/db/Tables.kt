@@ -16,7 +16,7 @@ object Users : Table("users") {
 /** Session and password-reset tokens; only the SHA-256 of the token is stored. */
 object Tokens : Table("tokens") {
     val hash = varchar("hash", 64)
-    val userId = long("user_id").references(Users.id, onDelete = ReferenceOption.CASCADE).index()
+    val userId = long("user_id").references(Users.id, onDelete = ReferenceOption.CASCADE)
     val kind = varchar("kind", 10) // "session" | "reset"
     val expires = long("expires") // epoch millis
     override val primaryKey = PrimaryKey(hash)
@@ -24,7 +24,7 @@ object Tokens : Table("tokens") {
 
 object Locations : Table("locations") {
     val id = long("id").autoIncrement()
-    val userId = long("user_id").references(Users.id, onDelete = ReferenceOption.CASCADE).index()
+    val userId = long("user_id").references(Users.id, onDelete = ReferenceOption.CASCADE)
     val name = varchar("name", 120)
     val country = varchar("country", 80).nullable()
     val lat = double("lat")
@@ -101,7 +101,7 @@ object Solax : Table("solax") {
 
 /** Energy produced per day as reported by SolaX (kWh). */
 object Produced : Table("produced") {
-    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
     val day = varchar("day", 10) // ISO date
     val kwh = double("kwh") // PV generation: what the panels produced
 
@@ -126,7 +126,7 @@ object GeocodeCache : Table("geocode_cache") {
 
 /** The highest battery charge (%) a past day reached, from SolaX's battery history; fetched once per day. */
 object BatteryDays : Table("battery_days") {
-    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
     val day = varchar("day", 10) // ISO date
     val maxSoc = double("max_soc")
 
@@ -140,7 +140,7 @@ object BatteryDays : Table("battery_days") {
  * every hourly read.
  */
 object SolarToday : Table("solar_today") {
-    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
     val day = varchar("day", 10) // ISO date, local to the place
     val t = varchar("t", 5) // HH:mm, local to the place
     val soc = double("soc").nullable()
@@ -157,7 +157,7 @@ object SolarToday : Table("solar_today") {
  * the rest of today.
  */
 object DischargeDays : Table("discharge_days") {
-    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
     val day = varchar("day", 10) // ISO date, local to the place
     val t = varchar("t", 5) // HH:mm, local to the place
     val dischargeW = double("discharge_w")
@@ -173,7 +173,7 @@ object DischargeDays : Table("discharge_days") {
  * place and day, updated at each check).
  */
 object NightPlans : Table("night_plans") {
-    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
     val day = varchar("day", 10) // ISO date of the day the plan is for, local to the place
     val foundAt = long("found_at") // when the battery was first found at its minimum
     val checkedAt = long("checked_at")
@@ -198,7 +198,7 @@ object NightPlans : Table("night_plans") {
 
 /** Stored 15-minute forecast steps (today and the next days); replaced on every refresh. */
 object Intraday15 : Table("intraday") {
-    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
     val day = varchar("day", 10) // ISO date
     val t = varchar("t", 5) // HH:mm
     val temp = double("temp").nullable()
@@ -210,7 +210,7 @@ object Intraday15 : Table("intraday") {
 
 /** Stored daily Open-Meteo values, one row per location and day. */
 object Daily : Table("daily") {
-    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE).index()
+    val locationId = long("location_id").references(Locations.id, onDelete = ReferenceOption.CASCADE)
     val day = varchar("day", 10) // ISO date
     val tMax = double("t_max").nullable()
     val tMin = double("t_min").nullable()
