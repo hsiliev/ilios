@@ -157,6 +157,18 @@ document.addEventListener('pointerleave',()=>{if(callout)callout.hidden=true});
 
 // the battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes): the last 12 hours
 // (yesterday's points are kept for this), the current time in the middle, and the forecast and estimate for the next 12
+// the end of the last charge: the latest local maximum of the charge curve (highest within an hour either side) that the
+// battery climbed to by at least 10 points within the 6 hours before; the night plan charges only to the level needed,
+// so the peak is often below 100 %
+function lastChargeEnd(pts){
+  const s=pts.filter(p=>p.soc!=null).sort((a,b)=>a.m-b.m);
+  for(let i=s.length-1;i>=0;i--){
+    const p=s[i];
+    const near=s.filter(q=>Math.abs(q.m-p.m)<=60),before=s.filter(q=>q.m<=p.m&&q.m>=p.m-360);
+    if(near.every(q=>q.soc<=p.soc)&&p.soc-Math.min(...before.map(q=>q.soc))>=10)return p.m;
+  }
+  return null;
+}
 export const NIGHT_FROM=22,NIGHT_TO=6; // cheap night tariff hours (local time)
 export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zone=[NIGHT_FROM,NIGHT_TO],prev=[],fcNext=[],todayIso=''){
   const [NF,NT]=zone;
@@ -167,7 +179,7 @@ export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zon
   const nm=nowMin(now),all=[...prev.map(p=>({...p,m:tmin(p.t,-1)})),...pts.map(p=>({...p,m:tmin(p.t,0)}))];
   let eo=0,et='';
   const epAll=estimate?.points?.length>0?estimate.points.map(p=>{if(et&&p.t<et)eo++;et=p.t;return{...p,m:tmin(p.t,eo)}}).filter(p=>p.m>nm):[];
-  const FULL=99,fullAt=all.filter(p=>p.soc>=FULL).map(p=>p.m),lastFull=fullAt.length?Math.max(...fullAt):nm-720;
+  const FULL=99,lastFull=lastChargeEnd(all)??nm-720;
   const lowAt=epAll.findIndex(p=>p.soc<FULL),peak=Math.max(0,...epAll.map(p=>p.soc)),cur=all.filter(p=>p.soc!=null).pop()?.soc??0;
   const nextFull=lowAt<0?null:epAll.slice(lowAt).find(p=>p.soc>=Math.min(FULL,peak-.5))?.m;
   const ws=Math.max(-1440,Math.floor((lastFull-60)/5)*5),we=Math.min(nm+1440,Math.max(ws+180,Math.ceil(((nextFull&&peak>cur+1?nextFull:nm+720)+60)/5)*5)),span=we-ws;
