@@ -105,7 +105,6 @@ class Report(
     val country: String? = null,
     val batteryToday: List<TodayPoint> = emptyList(),
     val pvForecast: List<TodayPoint> = emptyList(),
-    val batteryPrev: List<TodayPoint> = emptyList(),
     // yesterday's charge and tomorrow's panel forecast, for the 24-hour window
     val pvForecastNext: List<TodayPoint> = emptyList(),
     val night: NightCharge? = null,

@@ -52,7 +52,6 @@ fun buildReport(
     ac: Map<LocalDate, Double> = emptyMap(),
     maxSoc: Map<LocalDate, Double> = emptyMap(),
     batteryToday: List<TodayPoint> = emptyList(),
-    batteryPrev: List<TodayPoint> = emptyList(),
     load: Map<LocalDate, Double> = emptyMap(),
     dischargeProfile: List<DischargePoint> = emptyList(),
     loadByDay: Map<LocalDate, Map<String, Double>> = emptyMap(),
@@ -77,7 +76,6 @@ fun buildReport(
         )
     }
     val (nightFrom, nightTo) = nightZone(today, ZoneId.of(loc.tz))
-    val (dayPrice, nightPrice) = TARIFFS[loc.supplier] ?: TARIFFS.getValue(DEFAULT_SUPPLIER)
     return Report(
         loc.id, loc.name, loc.solar, today.toString(), points,
         wateringFor(
@@ -91,33 +89,42 @@ fun buildReport(
         // expected panel power of the 15-minute steps: installed kWp x radiation (W/m² over 1000) x the calibrated
         // yield ratio
         pvForecast = pvForecast, pvForecastNext = pvForecastNext,
-        batteryPrev = if (hasBattery) batteryPrev else emptyList(),
-        night = battery?.let {
-            nightCharge(
-                it.batteryKwh,
-                it.soc,
-                points.find { p ->
-                    p.date == today.plusDays(1).toString()
-                }?.kwh,
-                dayPrice,
-                nightPrice,
-                homeDay ?: 0.0,
-                loc.chargeEfficiency,
-            )
-        },
-        missed = battery?.let {
-            missedCharge(
-                it.batteryKwh,
-                batteryToday,
-                loc.reservedPct,
-                nightTo,
-                dayPrice,
-                nightPrice,
-                loc.chargeEfficiency,
-            )
-        },
+        night = battery?.let { nightAdvice(loc, it, points, today, homeDay) },
+        missed = battery?.let { missedAdvice(loc, it, batteryToday, nightTo) },
     )
 }
+
+/** The day and night price of the place's supplier. */
+private fun pricesOf(loc: Loc) = TARIFFS[loc.supplier] ?: TARIFFS.getValue(DEFAULT_SUPPLIER)
+
+/** What charging tonight would cost and save, from tomorrow's expected solar yield. */
+private fun nightAdvice(loc: Loc, battery: Battery, points: List<DayPoint>, today: LocalDate, homeDay: Double?) =
+    pricesOf(loc).let { (dayPrice, nightPrice) ->
+        val tomorrowKwh = points.find { it.date == today.plusDays(1).toString() }?.kwh
+        nightCharge(
+            battery.batteryKwh,
+            battery.soc,
+            tomorrowKwh,
+            dayPrice,
+            nightPrice,
+            homeDay ?: 0.0,
+            loc.chargeEfficiency,
+        )
+    }
+
+/** What today's grid import at the reserved level cost against the night price. */
+private fun missedAdvice(loc: Loc, battery: Battery, batteryToday: List<TodayPoint>, nightTo: Int) =
+    pricesOf(loc).let { (dayPrice, nightPrice) ->
+        missedCharge(
+            battery.batteryKwh,
+            batteryToday,
+            loc.reservedPct,
+            nightTo,
+            dayPrice,
+            nightPrice,
+            loc.chargeEfficiency,
+        )
+    }
 
 /**
  * The three-week window (previous, current and next week, Monday to Sunday) with solar yield, production and

@@ -83,16 +83,6 @@ function nightLine(r){
   return {text,charge,title:t};
 }
 
-// battery chart; when yesterday's readings were never stored (the app was not running) they come from the finished-day history
-function batteryBlock(r,b){
-  const box=h('div'),prev=[...(r.batteryPrev||[])];
-  const draw=()=>{box.innerHTML=batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.dischargeProfile||[],b,r.estimate,[r.nightFrom,r.nightTo],prev,r.pvForecastNext||[],r.today)};
-  draw();
-  if(!prev.length){const d=new Date(r.today+'T12:00:00');d.setDate(d.getDate()-1);
-    api(`/locations/${r.id}/battery-day/${d.toISOString().slice(0,10)}`).then(p=>{if(p.length){prev.push(...p);draw()}}).catch(()=>{})}
-  return [box];
-}
-
 function reportCard(r,i,state){
   if(r.error)return h('div',{cls:'card'},h('h2',{},r.name,r.country?[' ',h('span',{cls:'mut'},r.country)]:''),h('div',{cls:'yes'},r.error));
   const b=r.battery,html=s=>{const d=h('div');d.innerHTML=s;return [d]};
@@ -104,7 +94,7 @@ function reportCard(r,i,state){
     sec(r.id,'today','Времето',...(r.intraday?html(intraChart(r.intraday)):[h('p',{cls:'mut'},'Данните за деня се зареждат…')])),
     ...(r.solar?[
       sec(r.id,'sun','Седмично слънце',...(b?html(powerChart(r.days,r.today,b.batteryKwh,r.estimate)):[noSolar])),
-      ...(b?[sec(r.id,'battery','Батерия',...(r.batteryToday?.length||r.batteryPrev?.length||r.pvForecast?.length?batteryBlock(r,b):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
+      ...(b?[sec(r.id,'battery','Батерия',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.estimate,[r.nightFrom,r.nightTo],r.pvForecastNext||[],r.today)):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
     recommendations(r)));
 }
 

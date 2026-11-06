@@ -11,6 +11,7 @@ import ilios.module
 import ilios.solax.api.OK
 import ilios.tempDbPath
 import ilios.web.userId
+import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -19,6 +20,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.testApplication
@@ -32,6 +34,7 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -299,6 +302,15 @@ class SolaxPlantsTest : SolaxFixture() {
         assertEquals(noon.toEpochMilli() + 3_600_000L, row(loc)[Solax.dueAt], "a rate limit passes soon: wait an hour")
     }
 
+    /** Statistics like the real server: the one bad day, and only when its month is the requested one. */
+    private fun badCloudStats(req: HttpRequestData, day: LocalDate): String {
+        val month = Json.parseToJsonElement((req.body as TextContent).text).jsonObject["date"]!!.jsonPrimitive.content
+        val row = """{"date":"$day","pvGeneration":4383.2,"inverterACOutputEnergy":13.4}"""
+        return """{"code":10000,"result":{"plantEnergyStatDataList":[${row.takeIf {
+            day.toString().startsWith(month)
+        }.orEmpty()}]}}"""
+    }
+
     @Test
     fun aDayAboveWhatThePanelsCanMakeIsBadCloudDataAndIsNotUsed() = runBlocking {
         val loc = place()
@@ -307,8 +319,7 @@ class SolaxPlantsTest : SolaxFixture() {
             when {
                 req.url.encodedPath.endsWith("/oauth/token") -> token
                 req.url.encodedPath.endsWith("/page_plant_info") -> onePlant
-                req.url.encodedPath.endsWith("/get_stat_data") ->
-                    """{"code":10000,"result":{"plantEnergyStatDataList":[{"date":"$d","pvGeneration":4383.2,"inverterACOutputEnergy":13.4}]}}"""
+                req.url.encodedPath.endsWith("/get_stat_data") -> badCloudStats(req, d)
                 else -> other(req)
             }
         }

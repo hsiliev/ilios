@@ -1,9 +1,7 @@
 package ilios.web
 
 import ilios.auth.AuthService
-import ilios.badRequest
 import ilios.db.Loc
-import ilios.db.Locations
 import ilios.db.locOf
 import ilios.report.Report
 import ilios.report.buildReport
@@ -11,7 +9,6 @@ import ilios.report.nightPlans
 import ilios.solax.SolaxReadings
 import ilios.solax.SolaxRepository
 import ilios.solax.SolaxService
-import ilios.solax.storedBatteryDay
 import ilios.weather.WeatherService
 import io.ktor.server.application.call
 import io.ktor.server.response.respond
@@ -26,14 +23,6 @@ fun Route.reportRoutes(auth: AuthService, weather: WeatherService, solax: SolaxS
         val uid = call.userId(auth)
         solax.viewed()
         call.respond(userPlaces(uid).map { reportOf(locOf(it), weather) })
-    }
-    get("/locations/{id}/battery-day/{day}") {
-        val uid = call.userId(auth)
-        val lid = call.idParameter()
-        val row = userPlaces(uid).firstOrNull { it[Locations.id] == lid } ?: badRequest("Невалидно място")
-        val day = runCatching { LocalDate.parse(call.parameters["day"]) }.getOrNull() ?: badRequest("Невалидна дата")
-        val today = LocalDate.now(ZoneId.of(locOf(row).tz))
-        call.respond(if (day < today) storedBatteryDay(lid, day) else emptyList())
     }
 }
 
@@ -59,7 +48,6 @@ private fun reportOf(loc: Loc, weather: WeatherService): Report {
         ac = solar(emptyMap()) { sx.producedAc(loc.id) },
         maxSoc = solar(emptyMap()) { sx.batteryDays(loc.id) },
         batteryToday = solar(emptyList()) { sx.today(loc.id, today) },
-        batteryPrev = solar(emptyList()) { sx.today(loc.id, today.minusDays(1)) },
         load = solar(emptyMap()) { sx.consumption(loc.id) },
         dischargeProfile = solar(emptyList()) { sx.dischargeProfile(loc.id, today) },
         loadByDay = solar(emptyMap()) { sx.loadByDay(loc.id, today) },

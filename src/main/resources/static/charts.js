@@ -155,63 +155,92 @@ document.addEventListener('pointermove',showCallout);
 document.addEventListener('pointerdown',showCallout);
 document.addEventListener('pointerleave',()=>{if(callout)callout.hidden=true});
 
-// the battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes): the last 12 hours
-// (yesterday's points are kept for this), the current time in the middle, and the forecast and estimate for the next 12
+// the battery charge (line, right axis in %) and panel power (bars, left axis in kW) at SolaX's finest step (5 minutes): a fixed window
+// from 05:00 today to 07:00 tomorrow, with the forecast and estimate for what lies ahead
 export const NIGHT_FROM=22,NIGHT_TO=6; // cheap night tariff hours (local time)
-export function batteryChart(pts,fc=[],now='',load=[],bat=null,estimate=null,zone=[NIGHT_FROM,NIGHT_TO],prev=[],fcNext=[],todayIso=''){
-  const [NF,NT]=zone;
-  const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,ticks=5;
-  if(!now){const d=new Date();now=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
-  // a fixed window: from 05:00 yesterday to 07:00 tomorrow (50 hours); the estimate and forecast fill only what lies ahead
-  const nm=nowMin(now),all=[...prev.map(p=>({...p,m:tmin(p.t,-1)})),...pts.map(p=>({...p,m:tmin(p.t,0)}))];
-  let eo=0,et='';
-  const epAll=estimate?.points?.length>0?estimate.points.map(p=>{if(et&&p.t<et)eo++;et=p.t;return{...p,m:tmin(p.t,eo)}}).filter(p=>p.m>nm):[];
-  const ws=-1440+5*60,we=1440+7*60,span=we-ws;
-  const n=span/5,step=iw/n,inWin=m=>m>=ws&&m<we,at=m=>(m-ws)/5,X=m=>L+iw*(m-ws)/span;
-  const hist=all.filter(p=>inWin(p.m));
-  const last=hist.length?hist[hist.length-1].m:nowMin(now);
+const BAT_FROM=5*60,BAT_TO=1440+7*60; // the window, in minutes from midnight today
+
+// the measured points, the panel forecast and the server's estimate that fall into the window
+function batterySeries(pts,fc,fcNext,estimate,now){
+  const nm=nowMin(now),inWin=m=>m>=BAT_FROM&&m<BAT_TO;
+  const hist=pts.map(p=>({...p,m:tmin(p.t,0)})).filter(p=>inWin(p.m));
+  const last=hist.length?hist[hist.length-1].m:nm;
   const future=[...fc.map(p=>({...p,m:tmin(p.t,0)})),...fcNext.map(p=>({...p,m:tmin(p.t,1)}))].filter(p=>p.m>last&&inWin(p.m)&&p.pvW>0);
   // the server's 5-minute estimate (previous days' consumption pattern x the weather x the solar forecast) runs 12 hours ahead, past midnight
   // (its times wrap, so the day offset grows when a time is earlier than the one before); without consumption data there is no grid estimate
-  const byServer=estimate?.points?.length>0,ew=byServer?1:3;
-  const ep=byServer?epAll.filter(p=>p.m>last&&inWin(p.m)):[];
-  const est=ep.map(p=>({m:p.m,w:p.gridW,c:p.chargeW||0}));
-  const negKw=p=>p.gridW>0?p.gridW/1000:0; // below the axis: power drawn from the grid
+  const byServer=estimate?.points?.length>0;
+  let eo=0,et='';
+  const ep=byServer?estimate.points.map(p=>{if(et&&p.t<et)eo++;et=p.t;return{...p,m:tmin(p.t,eo)}}).filter(p=>p.m>nm&&p.m>last&&inWin(p.m)):[];
+  return{hist,future,ep,est:ep.map(p=>({m:p.m,w:p.gridW,c:p.chargeW||0})),ew:byServer?1:3};
+}
+
+// the frame: x from minutes to pixels, and the y scales (kW above the axis, grid kW below it, charge in %) on one kW scale
+function batteryGeometry(hist,future,est){
+  const W=900,H=360,L=48,R=48,T=20,B=34,iw=W-L-R,ih=H-T-B,ticks=5,span=BAT_TO-BAT_FROM,step=iw/(span/5);
   const maxKw=Math.max(0.5,...hist.map(p=>(p.pvW||0)/1000),...future.map(p=>p.pvW/1000))*1.1,kstep=stepFor(maxKw,ticks,[.5,1,2,5,10,20,50,100]);
-  const maxD=Math.max(0,...hist.map(negKw),...est.map(p=>p.w/1000)),hasD=maxD>0;
-  // the zone below the x axis (battery consumption) only exists when there is any discharge
-  // both zones share one kW scale: the same number of pixels per kW above and below the axis
-  const nneg=hasD?Math.ceil(maxD/kstep):0,ihT=ih*ticks/(ticks+nneg),ihB=ih-ihT,midY=T+ihT,dmax=nneg*kstep;
-  const yk=v=>midY-v/(kstep*ticks)*ihT,yp=p=>midY-p/100*ihT,yd=v=>midY+v/dmax*ihB;
+  const maxD=Math.max(0,...hist.map(negKw),...est.map(p=>p.w/1000));
+  // the zone below the x axis (battery consumption) only exists when there is any discharge; both zones use the same pixels per kW
+  const nneg=maxD>0?Math.ceil(maxD/kstep):0,ihT=ih*ticks/(ticks+nneg),ihB=ih-ihT,midY=T+ihT,dmax=nneg*kstep;
+  return{W,H,L,T,iw,ih,ticks,span,step,kstep,nneg,ihT,ihB,midY,
+    at:m=>(m-BAT_FROM)/5,X:m=>L+iw*(m-BAT_FROM)/span,
+    yk:v=>midY-v/(kstep*ticks)*ihT,yp:p=>midY-p/100*ihT,yd:v=>midY+v/dmax*ihB};
+}
+const negKw=p=>p.gridW>0?p.gridW/1000:0; // below the axis: power drawn from the grid
+
+// grid lines and labels of both y axes
+function batteryAxes(g){
+  const {L,T,iw,W,ticks,kstep,nneg,ihT,ihB,midY,yd}=g,dec=kstep<1?1:0;
   let o='';
   for(let k=0;k<=ticks;k++){const yy=midY-k*ihT/ticks;
-    o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${num(k*kstep,kstep<1?1:0)}</text><text x="${L+iw+6}" y="${yy+4}" class="tx">${k*20}%</text>`}
-  if(hasD){for(let k=1;k<=nneg;k++){const yy=yd(k*kstep);o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">-${num(k*kstep,kstep<1?1:0)}</text>`}
+    o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">${num(k*kstep,dec)}</text><text x="${L+iw+6}" y="${yy+4}" class="tx">${k*20}%</text>`}
+  if(nneg){for(let k=1;k<=nneg;k++){const yy=yd(k*kstep);o+=`<line x1="${L}" x2="${L+iw}" y1="${yy}" y2="${yy}" class="g"/><text x="${L-6}" y="${yy+4}" class="tx" text-anchor="end">-${num(k*kstep,dec)}</text>`}
     o+=`<text transform="translate(12 ${midY+ihB/2}) rotate(-90)" class="tx" text-anchor="middle">Мрежа (kW)</text>`}
-  o+=`<text transform="translate(12 ${T+ihT/2}) rotate(-90)" class="tx" text-anchor="middle">Мощност на панелите (kW)</text><text transform="translate(${W-8} ${T+ihT/2}) rotate(90)" class="tx" text-anchor="middle">Заряд на батерията (%)</text>`;
-  // tariff zones: night (NF-NT, cheap energy) is shaded, the day zone starts when it ends; yesterday's, today's and tomorrow's zones are cut to the window
+  return o+`<text transform="translate(12 ${T+ihT/2}) rotate(-90)" class="tx" text-anchor="middle">Мощност на панелите (kW)</text><text transform="translate(${W-8} ${T+ihT/2}) rotate(90)" class="tx" text-anchor="middle">Заряд на батерията (%)</text>`;
+}
+
+// tariff zones: night (NF-NT, cheap energy) is shaded, the day zone starts when it ends; today's and tomorrow's zones are cut to the window
+function batteryZones(g,[NF,NT]){
+  const {T,ih,X}=g,inWin=m=>m>=BAT_FROM&&m<BAT_TO;
+  let o='';
   for(let d=-1;d<=2;d++){
     for(const [a,b] of [[d*1440,d*1440+NT*60],[d*1440+NF*60,d*1440+1440]]){
-      const x1=X(Math.max(a,ws)),x2=X(Math.min(b,we));
+      const x1=X(Math.max(a,BAT_FROM)),x2=X(Math.min(b,BAT_TO));
       if(x2-x1>0)o+=`<rect x="${x1}" y="${T}" width="${x2-x1}" height="${ih}" class="nightz"/>`+(x2-x1>90?`<text x="${(x1+x2)/2}" y="${T+12}" class="tx" text-anchor="middle">нощна енергия</text>`:'')}
     const dz=d*1440+NT*60;
     if(inWin(dz))o+=`<line x1="${X(dz)}" x2="${X(dz)}" y1="${T}" y2="${T+ih}" class="sep"/><text x="${X(dz)+4}" y="${T+12}" class="tx">дневна енергия →</text>`}
-  const tk=span>2160?360:180;
-  for(let m=Math.ceil(ws/tk)*tk;m<=we;m+=tk){const xx=X(m);o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${hm(m)}</text>`;
-    // the date under each midnight
+  return o;
+}
+
+// the hour ticks and, under each midnight, its date
+function batteryTicks(g,todayIso){
+  const {T,ih,X,span}=g,tk=span>2160?360:180;
+  let o='';
+  for(let m=Math.ceil(BAT_FROM/tk)*tk;m<=BAT_TO;m+=tk){const xx=X(m);o+=`<line x1="${xx}" x2="${xx}" y1="${T}" y2="${T+ih}" class="g"/><text x="${xx}" y="${T+ih+16}" class="tx" text-anchor="middle">${hm(m)}</text>`;
     if(todayIso&&m%1440===0){const d=new Date(todayIso+'T12:00:00');d.setDate(d.getDate()+m/1440);o+=`<text x="${xx}" y="${T+ih+30}" class="tx b" text-anchor="middle">${d.getDate()}.${d.getMonth()+1}</text>`}}
+  return o;
+}
+
+// bars (panels up, grid down; the forecast and the estimate paler), the charge lines, the "now" marker and the hover columns
+function batteryData(g,{hist,future,ep,est,ew},now){
+  const {L,T,ih,step,midY,at,X,yk,yp,yd}=g;
+  let o='';
   hist.forEach(p=>{const v=(p.pvW||0)/1000;if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.m)+step/2-bw/2}" y="${yk(v)}" width="${bw}" height="${midY-yk(v)}" class="kprod"/>`}});
   hist.forEach(p=>{const v=negKw(p);if(v>0){const bw=Math.max(step*.9,1.5);o+=`<rect x="${L+step*at(p.m)+step/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbat"/>`}});
   // pale bars: Open-Meteo's forecast (15-minute steps) for the next hours
   future.forEach(p=>{const bw=step*3*.9;o+=`<rect x="${L+step*at(p.m)+step*1.5-bw/2}" y="${yk(p.pvW/1000)}" width="${bw}" height="${midY-yk(p.pvW/1000)}" class="kfc"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*3}" height="${ih}" class="hit" data-tip="${hm(p.m)}|прогноза ${num(p.pvW/1000,2)} kW"/>`});
   // pale red bars: the grid power the estimate expects
   est.forEach(p=>{const v=p.w/1000,bw=step*ew*.9;if(v>0)o+=`<rect x="${L+step*at(p.m)+step*ew/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbatf"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*ew}" height="${ih}" class="hit" data-tip="${hm(p.m)}|очаквано от мрежата ${num(v,2)} kW${p.c>0?'|в т.ч. планирано зареждане '+num(p.c/1000,2)+' kW':''}"/>`});
-  // dashed line: the charge the estimate expects for the rest of the day
-  if(ep.length)o+=`<polyline points="${ep.map(p=>(L+step*(at(p.m)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc" stroke-dasharray="5 4"/>`;
-  const s=hist.filter(p=>p.soc!=null);
-  if(s.length)o+=`<polyline points="${s.map(p=>(L+step*(at(p.m)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc"/>`;
-  const nx=X(nowMin(now));
-  if(inWin(nowMin(now)))o+=`<line x1="${nx}" x2="${nx}" y1="${T}" y2="${T+ih}" class="now"/><text x="${nx+4}" y="${T+ih-6}" class="tx b">сега ${now}</text>`;
+  const line=(ps,extra='')=>ps.length?`<polyline points="${ps.map(p=>(L+step*(at(p.m)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc"${extra}/>`:'';
+  o+=line(ep,' stroke-dasharray="5 4"')+line(hist.filter(p=>p.soc!=null)); // dashed: the charge the estimate expects
+  const nm=nowMin(now),nx=X(nm);
+  if(nm>=BAT_FROM&&nm<BAT_TO)o+=`<line x1="${nx}" x2="${nx}" y1="${T}" y2="${T+ih}" class="now"/><text x="${nx+4}" y="${T+ih-6}" class="tx b">сега ${now}</text>`;
   hist.forEach(p=>o+=`<rect x="${L+step*at(p.m)}" y="${T}" width="${step}" height="${ih}" class="hit" data-tip="${hm(p.m)}${p.pvW!=null?'|панели '+num(p.pvW/1000,2)+' kW':''}${p.gridW>0?'|от мрежата '+num(p.gridW/1000,2)+' kW':''}${p.soc!=null?'|батерия '+num(p.soc,0)+'%':''}"/>`);
-  return legend([[sw('l','background:var(--cbat)'),'Заряд на батерията (%)'],[sw('b','background:var(--kprod)'),'Мощност на панелите (kW)'],[sw('b','background:var(--kbat)'),'Изтеглено от мрежата (kW)']])+shell(W,H,'Батерия',o);
+  return o;
+}
+
+export function batteryChart(pts,fc=[],now='',estimate=null,zone=[NIGHT_FROM,NIGHT_TO],fcNext=[],todayIso=''){
+  if(!now){const d=new Date();now=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
+  const series=batterySeries(pts,fc,fcNext,estimate,now),g=batteryGeometry(series.hist,series.future,series.est);
+  const o=batteryAxes(g)+batteryZones(g,zone)+batteryTicks(g,todayIso)+batteryData(g,series,now);
+  return legend([[sw('l','background:var(--cbat)'),'Заряд на батерията (%)'],[sw('b','background:var(--kprod)'),'Мощност на панелите (kW)'],[sw('b','background:var(--kbat)'),'Изтеглено от мрежата (kW)']])+shell(g.W,g.H,'Батерия',o);
 }
