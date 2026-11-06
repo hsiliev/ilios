@@ -1,6 +1,7 @@
 package ilios.report
 
 import ilios.MILLIS
+import ilios.PERCENT
 import ilios.SLOTS_PER_HOUR
 import ilios.db.DEFAULT_SUPPLIER
 
@@ -81,7 +82,8 @@ fun nightCharge(
 /**
  * What not charging the battery at night cost today. Only the day zone from its start counts: while the battery is
  * down at its reserved
- * level (+1%) the house buys from the grid at day price what a night charge would have bought at night price. A
+ * level (+1%) the house buys from the grid at day price what a night charge would have bought at night price, but
+ * never more than the room the battery had when the day zone began (a full charge could not have stored more). A
  * battery that never ran
  * empty lost nothing. The night charge that would have supplied that energy costs kwh ÷ [efficiency] at night price.
  * Null until the day zone has started.
@@ -98,17 +100,50 @@ fun missedCharge(
     val from = "%02d:00".format(dayFromHour)
     val day = pts.filter { it.soc != null && it.t >= from }
     if (batteryKwh <= 0 || day.isEmpty()) return null
-    val empty = day.filter { it.soc!! <= reservedPct + 1.0 }
-    val kwh = empty.sumOf { (it.gridW ?: 0.0).coerceAtLeast(0.0) } / (SLOTS_PER_HOUR * MILLIS) // 5-minute steps
-    if (kwh < MIN_MISSED_KWH) return MissedCharge(0.0, 0.0, "Батерията не е свършила през деня – няма спестявания.")
+    val (imported, kwh) = coverableImport(day, batteryKwh, reservedPct)
+    if (imported <
+        MIN_MISSED_KWH
+    ) {
+        return MissedCharge(0.0, 0.0, "Батерията не е свършила през деня – няма спестявания.")
+    }
+    if (kwh < MIN_MISSED_KWH) {
+        return MissedCharge(
+            0.0,
+            0.0,
+            "Батерията е стигнала резерва, но по-пълна нощна батерия нямаше да помогне – слънцето я е заредило " +
+                "догоре и излишъкът би се загубил.",
+        )
+    }
     val lost = kwh * dayPrice - kwh / efficiency * nightPrice
     return MissedCharge(
         r1(kwh),
         r2(lost),
-        "Батерията е стигнала резерва (${bg(
-            reservedPct.toDouble(),
-        )}%) и къщата е взела ≈ ${bg(
-            kwh,
-        )} kWh от мрежата по дневна цена вместо по ${bg2(nightPrice)} €/kWh – пропусната икономия ≈ ${bg2(lost)} €.",
+        "Батерията е стигнала резерва (${bg(reservedPct.toDouble())}%) и къщата е взела ≈ ${bg(imported)} kWh от " +
+            "мрежата по дневна цена. По-пълна нощна батерия е можела да поеме ≈ ${bg(kwh)} kWh от тях – " +
+            "пропусната икономия ≈ ${bg2(lost)} € (нощна цена ${bg2(nightPrice)} €/kWh).",
     )
+}
+
+/**
+ * Replays the day zone with a battery that began it fuller by its whole room (what a night charge to 100 % would
+ * have added). That extra energy covers the grid import of the steps where the battery really sat at its reserved
+ * level (+1%) and is used up doing so; whenever the sun charges the real battery so far that the fuller one would
+ * overflow, the excess is lost. Returns the grid energy drawn while empty and the part of it the extra energy would
+ * have covered (kWh).
+ */
+private fun coverableImport(day: List<TodayPoint>, batteryKwh: Double, reservedPct: Int): Pair<Double, Double> {
+    var extra = batteryKwh * (PERCENT - day.first().soc!!).coerceAtLeast(0.0) / PERCENT
+    var imported = 0.0
+    var covered = 0.0
+    for (p in day) {
+        val soc = p.soc!!
+        extra = minOf(extra, batteryKwh * (PERCENT - soc).coerceAtLeast(0.0) / PERCENT)
+        if (soc > reservedPct + 1.0) continue
+        val grid = (p.gridW ?: 0.0).coerceAtLeast(0.0) / (SLOTS_PER_HOUR * MILLIS) // 5-minute steps
+        val used = minOf(extra, grid)
+        imported += grid
+        covered += used
+        extra -= used
+    }
+    return imported to covered
 }
