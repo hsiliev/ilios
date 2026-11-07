@@ -114,7 +114,13 @@ class NightPlanner(private val weather: WeatherService, solax: SolaxService) {
             nightTargetSoc(c, forecast.pattern, tTo * 12, (CHARGE_END_BEFORE_MS / SLOT_MS).toInt(), reading.capacityKwh)
         val reached = c.totalKwh <= 0 || reading.soc >= targetSoc
         val gap = (CHARGE_END_BEFORE_MS / SLOT_MS).toInt()
-        val stops = chargeStops(SolaxReadings.loadByDay(loc.id, local.toLocalDate()), tTo * SLOTS_PER_HOUR - gap)
+        val days = weather.days(loc)
+        val stops = chargeStops(
+            SolaxReadings.loadByDay(loc.id, local.toLocalDate()),
+            tTo * SLOTS_PER_HOUR - gap,
+            minTemps(days),
+            days.find { it.date == target }?.tMin,
+        )
         val (chargeUntil, control) =
             inverter.control(loc, existing, plant, targetSoc, reached, local, target, tTo, stops)
         // the battery is read every 5 minutes around the latest start (see batterySlot)

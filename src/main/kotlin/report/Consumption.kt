@@ -29,6 +29,9 @@ fun homeDaytimeKwh(load: Map<LocalDate, Double>, today: LocalDate): Double? = (1
     load[today.minusDays(it)]
 }.takeIf { it.isNotEmpty() }?.average()?.times(DAYTIME_LOAD_SHARE)
 
+/** The lowest temperature of each day that has one (the cold of the night that ends in it). */
+fun minTemps(days: List<Day>): Map<LocalDate, Double> = days.mapNotNull { d -> d.tMin?.let { d.date to it } }.toMap()
+
 /**
  * The consumption pattern (W per 5-minute slot) expected on [date]: the previous days' pattern scaled by that day's
  * temperature- and sun-based

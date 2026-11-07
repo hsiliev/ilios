@@ -23,12 +23,11 @@ class ChargeStopsTest {
     }
 
     @Test
-    fun theChargeGivesWayWhenTheLoadPassesTheGridLimit() {
-        // only 500 W of the 7 kW is left for the charge in the last 6 slots: 6 x 500 W = 0.25 kWh, then 2 kW
-        val busy = DoubleArray(144) { if (it < 6) 6500.0 else 0.0 }
+    fun theChargeStopsWhenLoadAndChargeDoNotFitTheTotal() {
+        // 6 kW + 2 kW is over 7 kW: nothing is charged in the last 6 slots (5 kW + 2 kW still fits)
+        val busy = DoubleArray(144) { if (it < 6) 6000.0 else 5000.0 }
         val stops = ChargeStops(List(4) { busy })
-        // 2 kWh: 0.25 in the last 6 slots, the other 1.75 kWh at 2 kW = 10.5 slots
-        assertEquals(16.5, stops.slots(2.0, 2000.0, 1.0), 1e-9)
+        assertEquals(18.0, stops.slots(2.0, 2000.0, 1.0), 1e-9)
     }
 
     @Test
@@ -57,5 +56,21 @@ class ChargeStopsTest {
         assertEquals(132.0, stops.slots(20.0, 2000.0, 1.0), 1e-9)
         // a charge that ends before the busy hour is not affected
         assertEquals(12.0, stops.slots(2.0, 2000.0, 1.0), 1e-9)
+    }
+
+    @Test
+    fun withAForecastTheNightsNearestInTemperatureCount() {
+        val busy = DoubleArray(144) { if (it < 12) 7000.0 else 0.0 } // the last hour charges nothing
+        val quiet = night(0.0)
+        // cold nights are busy, mild ones quiet; the temperatures are of the nights in order
+        val nights = listOf(busy, busy, busy, quiet, quiet, quiet)
+        val temps = listOf(-5.0, -4.0, -3.0, 8.0, 9.0, 10.0)
+        assertEquals(24.0, ChargeStops(nights, temps, -4.0).slots(2.0, 2000.0, 1.0), 1e-9)
+        assertEquals(12.0, ChargeStops(nights, temps, 9.0).slots(2.0, 2000.0, 1.0), 1e-9)
+        // no forecast: the median of all (the upper middle, a busy one)
+        assertEquals(24.0, ChargeStops(nights, temps, null).slots(2.0, 2000.0, 1.0), 1e-9)
+        // too few nights with a temperature: all nights count
+        val few = ChargeStops(nights, listOf(-5.0, null, null, null, null, null), 9.0)
+        assertEquals(24.0, few.slots(2.0, 2000.0, 1.0), 1e-9)
     }
 }

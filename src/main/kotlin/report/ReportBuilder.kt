@@ -290,7 +290,14 @@ private fun plannedChargeOf(
             loc.maxChargeW.toDouble(),
             loc.chargeEfficiency,
             running,
-            chargeStops(i.loadByDay, w.end % SLOTS_PER_DAY),
+            chargeStops(
+                i.loadByDay,
+                w.end % SLOTS_PER_DAY,
+                minTemps(i.days),
+                i.days.find {
+                    it.date == w.planDay
+                }?.tMin,
+            ),
         )
             ?: return null
     return PlannedCharge(start, w.end, loc.maxChargeW.toDouble(), target, loc.chargeEfficiency)
