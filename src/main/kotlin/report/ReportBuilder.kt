@@ -52,6 +52,7 @@ fun buildReport(
     ac: Map<LocalDate, Double> = emptyMap(),
     maxSoc: Map<LocalDate, Double> = emptyMap(),
     batteryToday: List<TodayPoint> = emptyList(),
+    batteryPrev: List<TodayPoint> = emptyList(),
     load: Map<LocalDate, Double> = emptyMap(),
     dischargeProfile: List<DischargePoint> = emptyList(),
     loadByDay: Map<LocalDate, Map<String, Double>> = emptyMap(),
@@ -85,6 +86,7 @@ fun buildReport(
         battery, intraday, country = loc.country, estimate = estimate,
         nightFrom = nightFrom, nightTo = nightTo,
         batteryToday = if (hasBattery) batteryToday else emptyList(),
+        batteryPrev = if (hasBattery) batteryPrev else emptyList(),
         dischargeProfile = if (hasBattery) dischargeProfile else emptyList(),
         // expected panel power of the 15-minute steps: installed kWp x radiation (W/m² over 1000) x the calibrated
         // yield ratio

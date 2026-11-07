@@ -154,10 +154,10 @@ class ControlTest {
     @Test fun `only the efficiency share of the power reaches the battery`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000, chargeEff = 70)
         val (svc, seen) = service { answer(it) }
-        val running = plan(now.toInstant().toEpochMilli() + 3_600_000)
-        planner(svc).control(loc, running, plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
-        // 4 kWh at 2 kW x 70 % = 1.4 kW: 10285 s + 60 s
-        assertEquals(10_345, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+        val start = at("2026-12-01", "04:00")
+        planner(svc).control(loc, null, plant(20.0), 60.0, false, start, start.toLocalDate(), 7)
+        // 4 kWh at 2 kW x 70 % = 1.4 kW need 10285 s + 60 s, so the latest start is 04:02:35; the charge runs to 06:55
+        assertEquals(10_500, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
     }
 
     @Test fun `charging waits only while the next reading is still in time`() = runBlocking<Unit> {
@@ -176,8 +176,9 @@ class ControlTest {
         val (svc, seen) = service { answer(it) }
         val reading = at("2026-12-01", "04:50") // the next reading (04:55) would be after the latest start, 04:54
         val (until, _) = planner(svc).control(loc, null, plant(20.0), 60.0, false, reading, reading.toLocalDate(), 7)
-        assertEquals(7260, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
-        assertEquals(reading.toInstant().toEpochMilli() + 7_260_000, until)
+        // the charge runs to 06:55 whatever the start: 2 h 5 min
+        assertEquals(7500, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+        assertEquals(at("2026-12-01", "06:55").toInstant().toEpochMilli(), until)
     }
 
     @Test fun `a late first reading cuts the timer at the end`() = runBlocking<Unit> {
@@ -199,13 +200,14 @@ class ControlTest {
         assertEquals(at("2026-12-01", "06:55").toInstant().toEpochMilli(), until)
     }
 
-    @Test fun `a running charge is sent again with the time recomputed`() = runBlocking<Unit> {
+    @Test fun `a running charge is not sent again`() = runBlocking<Unit> {
         val loc = place(maxChargeW = 2000)
         val (svc, seen) = service { answer(it) }
-        val running = plan(now.toInstant().toEpochMilli() + 3_600_000)
-        // 2 kWh left: 1 h + 1 min
-        planner(svc).control(loc, running, plant(40.0), 60.0, false, now, now.toLocalDate(), 7)
-        assertEquals(3600 + 60, bodyOf(commands(seen).single())["timeOfDuration"]!!.jsonPrimitive.int)
+        val until = now.toInstant().toEpochMilli() + 3_600_000
+        val (kept, text) = planner(svc).control(loc, plan(until), plant(40.0), 60.0, false, now, now.toLocalDate(), 7)
+        assertTrue(commands(seen).isEmpty())
+        assertEquals(until, kept)
+        assertEquals("earlier", text)
     }
 
     @Test fun `a charge that reached the plan is ended, and nothing is sent when none runs`() = runBlocking<Unit> {
@@ -247,12 +249,17 @@ class ControlTest {
         assertTrue(commands(seen).isEmpty())
     }
 
-    @Test fun `a failed command is reported in the status and keeps what was running`() = runBlocking<Unit> {
+    @Test fun `a failed start is reported in the status and tried again at the next reading`() = runBlocking<Unit> {
         val loc = place()
-        val (svc, _) = service { answer(it, """{"code":10403,"message":"no"}""") }
-        val until = now.toInstant().toEpochMilli() + 600_000
-        val (kept, text) = planner(svc).control(loc, plan(until), plant(20.0), 60.0, false, now, now.toLocalDate(), 7)
-        assertEquals(until, kept)
-        assertTrue(!text.isNullOrBlank() && text != "earlier")
+        var fail = true
+        val (svc, seen) = service { answer(it, if (fail) """{"code":10403,"message":"no"}""" else ok) }
+        val late = at("2026-12-01", "04:54")
+        val (kept, text) = planner(svc).control(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7)
+        assertEquals(null, kept)
+        assertTrue(!text.isNullOrBlank())
+        fail = false
+        val again = planner(svc).control(loc, null, plant(20.0), 60.0, false, late, late.toLocalDate(), 7)
+        assertTrue(again.first != null)
+        assertEquals(2, commands(seen).size)
     }
 }

@@ -48,6 +48,7 @@ private fun reportOf(loc: Loc, weather: WeatherService): Report {
         ac = solar(emptyMap()) { sx.producedAc(loc.id) },
         maxSoc = solar(emptyMap()) { sx.batteryDays(loc.id) },
         batteryToday = solar(emptyList()) { sx.today(loc.id, today) },
+        batteryPrev = solar(emptyList()) { sx.today(loc.id, today.minusDays(1)) },
         load = solar(emptyMap()) { sx.consumption(loc.id) },
         dischargeProfile = solar(emptyList()) { sx.dischargeProfile(loc.id, today) },
         loadByDay = solar(emptyMap()) { sx.loadByDay(loc.id, today) },

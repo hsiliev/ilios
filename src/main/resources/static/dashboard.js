@@ -94,7 +94,7 @@ function reportCard(r,i,state){
     sec(r.id,'today','Времето',...(r.intraday?html(intraChart(r.intraday)):[h('p',{cls:'mut'},'Данните за деня се зареждат…')])),
     ...(r.solar?[
       sec(r.id,'sun','Седмично слънце',...(b?html(powerChart(r.days,r.today,b.batteryKwh,r.estimate)):[noSolar])),
-      ...(b?[sec(r.id,'battery','Батерия',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.estimate,[r.nightFrom,r.nightTo],r.pvForecastNext||[],r.today)):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
+      ...(b?[sec(r.id,'battery','Батерия',...(r.batteryToday?.length||r.pvForecast?.length?html(batteryChart(r.batteryToday||[],r.pvForecast||[],r.intraday?.now||'',r.estimate,[r.nightFrom,r.nightTo],r.pvForecastNext||[],r.today,r.batteryPrev||[])):[h('p',{cls:'mut'},'Още няма данни за деня. Натисни „Опресни данните“ в настройките.')]))]:[])]:[]),
     recommendations(r)));
 }
 

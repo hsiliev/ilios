@@ -33,11 +33,10 @@ internal typealias ChargeState = Pair<Long?, String?>
  * Charging runs on a timer that the inverter honours by itself: the energy still missing divided by the power that
  * reaches the battery (the place's charging efficiency), and never
  * past 5 minutes before the day zone start; a charge is not started before it has to be, so that it ends then (the
- * last battery reading from which it still ends in time starts it, because the next reading would be too late). Each
- * fresh battery reading
- * sends the command again with the time recomputed (a new command replaces a running one), and as soon as the plan
- * is reached, or
- * management is switched off, a running charge is ended.
+ * last battery reading from which it still ends in time starts it, because the next reading would be too late). The
+ * command is sent once and its timer runs until that end: only the start is calculated. While a charge runs nothing is
+ * sent again (a new command replaces a running one and briefly leaves the mode); only a failed send is tried again at
+ * the next reading. As soon as the plan is reached, or management is switched off, a running charge is ended.
  */
 internal class InverterControl(private val solax: SolaxService) {
     /**
@@ -62,8 +61,9 @@ internal class InverterControl(private val solax: SolaxService) {
         val stopReason = stopReason(loc, reached, level)
         if (stopReason != null) return if (running == null) keep else stop(loc, running, stopReason)
         val end = chargeEnd(target, stopHour, local.zone)
-        val seconds = timerSeconds(loc, plant, targetSoc, now, end, running != null, stops) ?: return keep
-        return start(loc, running, level, seconds, local, now)
+        if (running != null) return keep // sent once; the timer ends it
+        val seconds = timerSeconds(loc, plant, targetSoc, now, end, stops) ?: return keep
+        return start(loc, level, seconds, local, now)
     }
 
     /** Why a running charge has to end, or null when charging is wanted. */
@@ -96,12 +96,11 @@ internal class InverterControl(private val solax: SolaxService) {
         targetSoc: Double,
         now: Long,
         end: Long,
-        running: Boolean,
         stops: ChargeStops,
     ): Long? {
         val need = needSeconds(loc, plant, targetSoc, stops) ?: return null
-        val seconds = minOf((end - now) / 1000, need)
-        val tooEarly = !running && now + NEXT_READING_MS <= end - need * 1000 // the next reading is still in time
+        val seconds = (end - now) / MILLIS // the charge runs until its end; only the start is calculated
+        val tooEarly = now + NEXT_READING_MS <= end - need * 1000 // the next reading is still in time
         return seconds.takeUnless { it < MIN_CHARGE_SECONDS || tooEarly }
     }
 
@@ -118,14 +117,7 @@ internal class InverterControl(private val solax: SolaxService) {
     fun latestStart(loc: Loc, plant: SolaxPlant, targetSoc: Double, end: Long, stops: ChargeStops): Long? =
         needSeconds(loc, plant, targetSoc, stops)?.let { end - it * MILLIS }
 
-    private suspend fun start(
-        loc: Loc,
-        running: Long?,
-        level: Int,
-        seconds: Long,
-        local: ZonedDateTime,
-        now: Long,
-    ): ChargeState = try {
+    private suspend fun start(loc: Loc, level: Int, seconds: Long, local: ZonedDateTime, now: Long): ChargeState = try {
         solax.startCharge(loc, seconds.toInt())
         val at = local.format(DateTimeFormatter.ofPattern("HH:mm"))
         now + seconds * MILLIS to
@@ -133,7 +125,7 @@ internal class InverterControl(private val solax: SolaxService) {
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        failed(loc, e, running)
+        failed(loc, e, null)
     }
 
     private fun failed(loc: Loc, e: Exception, until: Long?): ChargeState {
