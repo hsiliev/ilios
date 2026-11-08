@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart Ilios (the H2 file is compacted at start)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart ilios.service

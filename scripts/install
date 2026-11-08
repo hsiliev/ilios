@@ -8,7 +8,6 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_USER=ilios
 INSTALL_DIR=/opt/ilios
 CONF_DIR=/etc/ilios
-UNIT=/etc/systemd/system/ilios.service
 PORT="${PORT:-8081}" # Hermes already uses 8080
 
 log() { printf '\033[0;32m[INFO]\033[0m %s\n' "$*"; }
@@ -54,31 +53,6 @@ if [[ ! -e "$CONF_DIR/ilios.env" ]]; then
   sudo chmod 0640 "$CONF_DIR/ilios.env"; sudo chown root:"$APP_USER" "$CONF_DIR/ilios.env"
 fi
 
-log 'Installing the systemd unit'
-sudo tee "$UNIT" >/dev/null <<UNITEOF
-[Unit]
-Description=Ilios - solar and weather advisor
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$APP_USER
-Group=$APP_USER
-# the database lives in ./data relative to this directory
-WorkingDirectory=$INSTALL_DIR
-EnvironmentFile=-$CONF_DIR/ilios.env
-Environment=JAVA_OPTS=-Xms128m -Xmx512m
-ExecStart=$INSTALL_DIR/app/bin/ilios
-Restart=on-failure
-RestartSec=5s
-SyslogIdentifier=ilios
-
-[Install]
-WantedBy=multi-user.target
-UNITEOF
-sudo systemctl daemon-reload
-sudo systemctl enable ilios
-
+# the systemd units (deploy/systemd) are installed by update, which also builds and starts the service
 "$REPO_ROOT/scripts/update" --no-pull
 log "Ilios is installed. Logs: journalctl -u ilios -f"

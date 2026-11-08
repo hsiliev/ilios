@@ -5,10 +5,34 @@ set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_DIR=/opt/ilios
+CONF_DIR=/etc/ilios
 APP_USER=ilios
 
 log() { printf '\033[0;32m[INFO]\033[0m %s\n' "$*"; }
 die() { printf '\033[0;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Installs the systemd units from deploy/systemd (templates with @APP_USER@, @INSTALL_DIR@ and @CONF_DIR@), only those
+# whose text differs, reloads systemd when one changed and keeps the quarterly restart timer enabled.
+install_units() {
+  local changed=0 name tmp
+  for name in ilios.service ilios-restart.service ilios-restart.timer; do
+    tmp="$(mktemp)"
+    sed -e "s|@APP_USER@|$APP_USER|g" -e "s|@INSTALL_DIR@|$INSTALL_DIR|g" -e "s|@CONF_DIR@|$CONF_DIR|g" \
+      "$REPO_ROOT/deploy/systemd/$name" >"$tmp"
+    if ! sudo cmp -s "$tmp" "/etc/systemd/system/$name"; then
+      sudo install -m 0644 "$tmp" "/etc/systemd/system/$name"
+      changed=1
+      log "Unit $name written"
+    fi
+    rm -f "$tmp"
+  done
+  if [[ "$changed" == 1 ]]; then
+    sudo systemctl daemon-reload
+    sudo systemctl restart ilios-restart.timer 2>/dev/null || true # picks up a changed schedule; never starts the service
+  fi
+  sudo systemctl enable ilios >/dev/null 2>&1 || log 'Could not enable ilios.service'
+  sudo systemctl enable --now ilios-restart.timer >/dev/null 2>&1 || log 'Could not enable the restart timer'
+}
 
 [[ -d "$INSTALL_DIR" ]] || die "$INSTALL_DIR not found; run ./scripts/install first"
 cd "$REPO_ROOT"
@@ -25,6 +49,9 @@ log 'Building'
 log 'Deploying'
 sudo rsync -a --delete "$REPO_ROOT/build/install/ilios/" "$INSTALL_DIR/app/"
 sudo chown -R "$APP_USER:$APP_USER" "$INSTALL_DIR/app"
+
+log 'Syncing the systemd units'
+install_units
 
 log 'Restarting the service'
 sudo systemctl restart ilios
