@@ -11,6 +11,7 @@ import ilios.solax.SolaxReadings
 import ilios.solax.SolaxRepository
 import ilios.solax.SolaxService
 import ilios.weather.WeatherService
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import org.jetbrains.exposed.v1.core.and
@@ -25,6 +26,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.time.Duration.Companion.minutes
+
+private val log = KotlinLogging.logger {}
 
 /** Plans older than this many days are dropped. */
 private const val KEEP_PLAN_DAYS = 14L
@@ -78,13 +81,13 @@ class NightPlanner(private val weather: WeatherService, solax: SolaxService) {
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        System.err.println("Night plan failed for place ${loc.id}: ${e::class.simpleName}")
+                        log.error { "Night plan failed for place ${loc.id}: ${e::class.simpleName}" }
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                System.err.println("Night plan loop error: ${e::class.simpleName}")
+                log.error { "Night plan loop error: ${e::class.simpleName}" }
             }
             delay(5.minutes)
         }
@@ -137,6 +140,11 @@ class NightPlanner(private val weather: WeatherService, solax: SolaxService) {
             chargeUntil, control, startBy,
         )
         store(loc.id, plan, local.toLocalDate())
+        log.info {
+            "Night plan for place ${loc.id}, day $target: battery ${reading.soc.toInt()} %, " +
+                "target ${targetSoc.toInt()} %, reached $reached, latest start ${startBy ?: "-"}, " +
+                "control: ${control ?: "-"}"
+        }
     }
 
     /**

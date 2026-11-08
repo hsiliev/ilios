@@ -7,12 +7,15 @@ import ilios.solax.BATTERY_FAST_MINUTES
 import ilios.solax.SolaxPlant
 import ilios.solax.SolaxService
 import ilios.solax.api.SolaxError
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.ceil
+
+private val log = KotlinLogging.logger {}
 
 private const val HALF_MINUTE = 30
 
@@ -76,6 +79,7 @@ internal class InverterControl(private val solax: SolaxService) {
 
     private suspend fun stop(loc: Loc, running: Long, reason: String): ChargeState = try {
         solax.stopCharge(loc)
+        log.info { "Charge stopped for place ${loc.id}: $reason" }
         null to reason
     } catch (e: CancellationException) {
         throw e
@@ -129,8 +133,11 @@ internal class InverterControl(private val solax: SolaxService) {
     }
 
     private fun failed(loc: Loc, e: Exception, until: Long?): ChargeState {
-        if (e is SolaxError) return until to e.message?.take(STATUS_LIMIT)
-        System.err.println("Controlling the inverter failed for place ${loc.id}: ${e::class.simpleName}")
+        if (e is SolaxError) {
+            log.warn { "Charge command failed for place ${loc.id}: ${e.message}" }
+            return until to e.message?.take(STATUS_LIMIT)
+        }
+        log.warn { "Controlling the inverter failed for place ${loc.id}: ${e::class.simpleName}" }
         return until to "Инверторът не може да се управлява – ще опитам отново по-късно"
     }
 }

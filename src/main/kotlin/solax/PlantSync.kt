@@ -12,6 +12,7 @@ import ilios.solax.api.SolaxError
 import ilios.solax.api.SolaxSession
 import ilios.solax.api.StatRow
 import ilios.solax.api.plantsJson
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.builtins.ListSerializer
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -27,6 +28,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.util.Locale
+
+private val log = KotlinLogging.logger {}
 
 /**
  * The plant a place is connected to, as read from SolaX or from what is stored; [fromCache] when no call was needed,
@@ -136,7 +139,7 @@ internal object PlantSync {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            System.err.println("SolaX device list failed: ${e::class.simpleName}")
+            log.warn { "SolaX device list failed: ${e::class.simpleName}" }
             null
         }
 

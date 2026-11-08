@@ -8,6 +8,7 @@ import ilios.db.Locations
 import ilios.db.locOf
 import ilios.historyStart
 import ilios.solax.CHECK_EVERY
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -37,6 +38,8 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.time.Duration.Companion.minutes
+
+private val log = KotlinLogging.logger {}
 
 private const val INTRADAY_STEP_MINUTES = 15
 private val WMO_SNOW = 71..77
@@ -151,7 +154,7 @@ class WeatherService(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                System.err.println("Refresh loop error: ${e.message}")
+                log.error { "Refresh loop error: ${e.message}" }
             }
             delay(CHECK_EVERY)
         }
@@ -164,7 +167,7 @@ class WeatherService(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            System.err.println("Open-Meteo refresh failed for ${loc.name}: ${e.message}")
+            log.warn { "Open-Meteo refresh failed for ${loc.name}: ${e.message}" }
         }
     }
 
@@ -240,7 +243,7 @@ class WeatherService(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            System.err.println("Open-Meteo 15-minute refresh failed for ${loc.name}: ${e.message}")
+            log.warn { "Open-Meteo 15-minute refresh failed for ${loc.name}: ${e.message}" }
         }
     }
 

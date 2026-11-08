@@ -1,0 +1,15 @@
+<configuration>
+    <!-- the systemd priority prefix (<3> error ... <7> debug) is only added under systemd, see SyslogPriority -->
+    <conversionRule conversionWord="prio" class="ilios.SyslogPriority"/>
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%prio[%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <!-- Exposed reports H2's auto-named foreign-key indexes as "differs only in name"; harmless, so only warnings and errors -->
+    <logger name="Exposed" level="warn"/>
+    <root level="info">
+        <appender-ref ref="STDERR"/>
+    </root>
+</configuration>

@@ -9,6 +9,7 @@ import ilios.solax.api.SolaxError
 import ilios.solax.api.SolaxSession
 import ilios.solax.api.attempt
 import ilios.solax.api.solaxBaseUrl
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -21,6 +22,8 @@ import org.jetbrains.exposed.v1.jdbc.update
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+
+private val log = KotlinLogging.logger {}
 
 /**
  * The only code that talks to SolaX Cloud. One lock serialises the calls so that a place's token and quota are never
@@ -65,7 +68,7 @@ class SolaxService(http: HttpClient, baseUrl: String = solaxBaseUrl()) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                System.err.println("SolaX loop error: ${e.message}")
+                log.error { "SolaX loop error: ${e.message}" }
             }
             delay(CHECK_EVERY)
         }
@@ -79,7 +82,7 @@ class SolaxService(http: HttpClient, baseUrl: String = solaxBaseUrl()) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                System.err.println("SolaX battery loop error: ${e.message}")
+                log.error { "SolaX battery loop error: ${e.message}" }
             }
             delay(BATTERY_CHECK_EVERY)
         }
@@ -133,11 +136,16 @@ class SolaxService(http: HttpClient, baseUrl: String = solaxBaseUrl()) {
      * up the inverter leaves
      * remote control by itself, so the timer is the safety stop. A new command replaces a running one (power and timer). Throws [SolaxError].
      */
-    suspend fun startCharge(loc: Loc, seconds: Int) =
+    suspend fun startCharge(loc: Loc, seconds: Int) {
         remote(loc) { session, sns, type -> session.pushPower(sns, type, loc.maxChargeW, seconds) }
+        log.info { "Charge mode set for place ${loc.id}: Push Power at ${loc.maxChargeW} W for $seconds s" }
+    }
 
     /** Ends a charge started by [startCharge] at once (harmless when none is running). Throws [SolaxError]. */
-    suspend fun stopCharge(loc: Loc) = remote(loc) { session, sns, type -> session.exitRemote(sns, type) }
+    suspend fun stopCharge(loc: Loc) {
+        remote(loc) { session, sns, type -> session.exitRemote(sns, type) }
+        log.info { "Charge mode ended for place ${loc.id}: remote mode exited" }
+    }
 
     private suspend fun remote(loc: Loc, command: suspend (SolaxSession, List<String>, Int) -> Unit) = lock.withLock {
         val link = client.link(loc) ?: throw SolaxError("Няма връзка със SolaX")

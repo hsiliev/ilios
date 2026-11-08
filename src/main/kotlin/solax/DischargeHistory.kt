@@ -46,7 +46,6 @@ internal class DischargeHistory(private val client: SolaxClient) {
             "discharge history",
             loc.id,
             onSolaxError = { e ->
-                System.err.println("SolaX discharge history failed for place ${loc.id}: ${e.message}")
                 tryAt[loc.id] = now.toEpochMilli() + e.retryMs
             },
         ) {

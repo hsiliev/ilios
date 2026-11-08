@@ -5,6 +5,7 @@ import ilios.HttpError
 import ilios.auth.AuthService
 import ilios.auth.Mailer
 import ilios.badRequest
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.http.Cookie
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
@@ -13,6 +14,8 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+
+private val log = KotlinLogging.logger {}
 
 private const val MIN_PASSWORD = 8
 private const val MAX_PASSWORD = 200
@@ -69,9 +72,9 @@ fun Route.authRoutes(auth: AuthService, mailer: Mailer) {
                         resetMessage(link),
                     )
                 }
-                    .onFailure { call.application.environment.log.error("Reset mail failed: ${it.message}") }
+                    .onFailure { log.error { "Reset mail failed: ${it.message}" } }
             } else {
-                println("PASSWORD RESET for $email: $link (SMTP not configured)")
+                log.warn { "PASSWORD RESET for $email: $link (SMTP not configured)" }
             }
         }
         call.respond(Msg("Ако адресът е регистриран, изпратихме връзка за възстановяване на паролата."))

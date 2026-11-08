@@ -20,6 +20,14 @@ internal const val CHARGE_MODEL_TOTAL_W = 7000.0
 private const val NIGHT_SLOTS = 12 * MINUTES_PER_HOUR / SLOT_MINUTES // how far back a past night is looked at
 private const val MIN_NIGHTS = 3 // fewer nights say too little about the stops
 private const val NEAREST_NIGHTS = 3 // with a temperature forecast: the nights nearest to it count
+
+/**
+ * Slots of stops added per degree the forecast is colder than the nights used (taken away when it is warmer): the
+ * stops rise steeply with the cold (2026-11-08, 1.2 °C: about 16 slots; 11-07, 2.2 °C: 12; 3-7 slots on the 4-9 °C
+ * nights) and the nearest nights cannot say more than they had. A parameter between the fit over all nights
+ * (1.25 slots per degree) and over the nights up to 5 °C (3.3).
+ */
+internal const val STOP_SLOTS_PER_DEGREE = 2.0
 private const val SLOT_HOURS = SLOT_MINUTES.toDouble() / MINUTES_PER_HOUR
 
 /**
@@ -30,7 +38,8 @@ private const val SLOT_HOURS = SLOT_MINUTES.toDouble() / MINUTES_PER_HOUR
  * a worse night ends a few percent short (the timer is capped at the end) instead of the battery sitting full.
  * The stops come from the house's heavy loads, which follow the cold: with the coming night's forecast temperature
  * ([expectedTemp]) and each night's own ([temps], same order) only the [NEAREST_NIGHTS] nights nearest to it count
- * (their median); without them all nights do.
+ * (their median), and [STOP_SLOTS_PER_DEGREE] slots are added per degree it is colder than their mean (taken away
+ * when warmer, never below the plain time); without temperatures all nights count, unadjusted.
  */
 class ChargeStops(
     private val nights: List<DoubleArray>,
@@ -41,15 +50,20 @@ class ChargeStops(
     fun slots(missingKwh: Double, powerW: Double, efficiency: Double): Double {
         val plain = missingKwh / (powerW / MILLIS * efficiency) / SLOT_HOURS
         if (missingKwh <= 0 || nights.size < MIN_NIGHTS) return plain
-        val times = similar().map { slotsOn(it, missingKwh, powerW, efficiency) }.sorted()
-        return max(plain, times[times.size / 2])
+        val (used, meanTemp) = similar()
+        val times = used.map { slotsOn(it, missingKwh, powerW, efficiency) }.sorted()
+        val colder = if (meanTemp != null && expectedTemp != null) meanTemp - expectedTemp else 0.0
+        return max(plain, times[times.size / 2] + STOP_SLOTS_PER_DEGREE * colder)
     }
 
-    private fun similar(): List<DoubleArray> {
-        val expected = expectedTemp ?: return nights
-        val known = nights.indices.filter { temps.getOrNull(it) != null }
-        if (known.size < MIN_NIGHTS) return nights
-        return known.sortedBy { abs(temps[it]!! - expected) }.take(NEAREST_NIGHTS).map { nights[it] }
+    /** The nights that count and, when picked by temperature, their mean temperature. */
+    private fun similar(): Pair<List<DoubleArray>, Double?> {
+        val expected = expectedTemp ?: return nights to null
+        // (index of a night, its temperature) for the nights that have one
+        val known = nights.indices.mapNotNull { i -> temps.getOrNull(i)?.let { i to it } }
+        if (known.size < MIN_NIGHTS) return nights to null
+        val near = known.sortedBy { abs(it.second - expected) }.take(NEAREST_NIGHTS)
+        return near.map { nights[it.first] } to near.map { it.second }.average()
     }
 
     private fun slotsOn(night: DoubleArray, missingKwh: Double, powerW: Double, efficiency: Double): Double {

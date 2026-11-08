@@ -28,14 +28,18 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-migration-jdbc:$exposed")
     implementation("com.h2database:h2:2.5.252")
     implementation("org.eclipse.angus:angus-mail:2.0.5")
-    implementation("org.slf4j:slf4j-simple:2.0.17")
+    implementation("io.github.oshai:kotlin-logging-jvm:8.0.6") // logs through SLF4J
+    implementation("ch.qos.logback:logback-classic:1.6.6") // the engine under kotlin-logging, see logback.xml
 
     testImplementation("io.ktor:ktor-server-test-host:$ktor")
     testImplementation("io.ktor:ktor-client-mock:$ktor")
     testImplementation(kotlin("test"))
 }
 
-application { mainClass.set("ilios.MainKt") }
+application {
+    mainClass.set("ilios.MainKt")
+    applicationDefaultJvmArgs = listOf("-Dkotlin-logging.logStartupMessage=false") // no unprefixed line in the journal
+}
 
 tasks.test { useJUnitPlatform() }
 

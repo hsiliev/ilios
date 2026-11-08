@@ -10,6 +10,7 @@ import ilios.web.Msg
 import ilios.web.authRoutes
 import ilios.web.locationRoutes
 import ilios.web.reportRoutes
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -31,6 +32,8 @@ import org.koin.dsl.module
 import org.koin.ktor.ext.inject
 import org.koin.ktor.plugin.Koin
 
+private val log = KotlinLogging.logger {}
+
 private val json = Json { ignoreUnknownKeys = true }
 
 private val appModule = module {
@@ -44,6 +47,7 @@ private val appModule = module {
 }
 
 fun main() {
+    log.info { "Starting ilios on port $PORT" }
     initDb("./data/ilios")
     embeddedServer(CIO, port = PORT, host = "0.0.0.0", module = Application::module).start(wait = true)
 }

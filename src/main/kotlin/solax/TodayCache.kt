@@ -76,7 +76,6 @@ internal class TodayCache(private val client: SolaxClient) {
             "today's history",
             loc.id,
             onSolaxError = { e ->
-                System.err.println("SolaX today's history failed for place ${loc.id}: ${e.message}")
                 backOff(loc.id, now)
             },
             onFailure = { backOff(loc.id, now) },

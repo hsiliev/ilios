@@ -38,7 +38,6 @@ internal class BatteryDayHistory(private val client: SolaxClient) {
             "battery history",
             loc.id,
             onSolaxError = { e ->
-                System.err.println("SolaX battery history failed for place ${loc.id}: ${e.message}")
                 SolaxRepository.update(loc.id) { it[Solax.historyTryAt] = now.toEpochMilli() + e.retryMs }
             },
         ) {

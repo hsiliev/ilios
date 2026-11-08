@@ -73,4 +73,21 @@ class ChargeStopsTest {
         val few = ChargeStops(nights, listOf(-5.0, null, null, null, null, null), 9.0)
         assertEquals(24.0, few.slots(2.0, 2000.0, 1.0), 1e-9)
     }
+
+    @Test
+    fun aColderForecastAddsSlotsPerDegreeAndAWarmerOneTakesThemAway() {
+        val busy = DoubleArray(144) { if (it < 12) 7000.0 else 0.0 } // 24 slots for 2 kWh at 2 kW
+        val nights = List(3) { busy }
+        val temps = listOf(-5.0, -4.0, -3.0) // mean -4
+        // as cold as the nights: no change
+        assertEquals(24.0, ChargeStops(nights, temps, -4.0).slots(2.0, 2000.0, 1.0), 1e-9)
+        // 5 degrees colder than the nights: 2 slots per degree more
+        assertEquals(24.0 + 5 * STOP_SLOTS_PER_DEGREE, ChargeStops(nights, temps, -9.0).slots(2.0, 2000.0, 1.0), 1e-9)
+        // 3 degrees warmer: that many fewer
+        assertEquals(24.0 - 3 * STOP_SLOTS_PER_DEGREE, ChargeStops(nights, temps, -1.0).slots(2.0, 2000.0, 1.0), 1e-9)
+        // much warmer: never less than the plain time
+        assertEquals(12.0, ChargeStops(nights, temps, 20.0).slots(2.0, 2000.0, 1.0), 1e-9)
+        // no temperatures: no adjustment
+        assertEquals(24.0, ChargeStops(nights, emptyList(), -9.0).slots(2.0, 2000.0, 1.0), 1e-9)
+    }
 }

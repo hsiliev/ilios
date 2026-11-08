@@ -1,12 +1,39 @@
 package ilios.db
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.migration.jdbc.MigrationUtils
+import java.io.File
+import java.sql.DriverManager
+import java.util.Locale
 
-/** Opens (and creates or upgrades) the embedded H2 database at [path]. */
+private val log = KotlinLogging.logger {}
+
+/**
+ * H2 never gives back the space of deleted rows (the file reached 18 MB for 0.3 MB of data), so an existing database is
+ * compacted before anything else opens it; a failure only costs the space, not the start.
+ */
+private fun compact(path: String) {
+    val file = File("$path.mv.db")
+    if (!file.exists()) return
+    val before = file.length()
+    runCatching {
+        DriverManager.getConnection("jdbc:h2:file:$path").use { it.createStatement().execute("SHUTDOWN COMPACT") }
+    }
+        .onSuccess { log.info { "Database compacted: ${megabytes(before)} -> ${megabytes(file.length())}" } }
+        .onFailure { log.warn { "Compacting the database failed: ${it::class.simpleName}" } }
+}
+
+private const val BYTES_PER_MB = 1_048_576.0
+
+private fun megabytes(bytes: Long) = "%.1f MB".format(Locale.ROOT, bytes / BYTES_PER_MB)
+
+/** Compacts, then opens (and creates or upgrades) the embedded H2 database at [path]. */
 fun initDb(path: String) {
+    compact(path)
     Database.connect("jdbc:h2:file:$path;DB_CLOSE_DELAY=-1", "org.h2.Driver")
+    log.info { "Database opened: $path" }
     transaction {
         // days stored before the AC column existed are fetched again once
         val hadAc = runCatching { exec("SELECT ac_kwh FROM produced WHERE 1 = 0") }.isSuccess
