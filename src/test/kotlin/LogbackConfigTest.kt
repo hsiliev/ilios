@@ -53,9 +53,9 @@ class LogbackConfigTest {
     }
 
     @Test
-    fun `Exposed only reports warnings and errors`() {
+    fun `Exposed only reports errors`() {
         val context = configured()
-        assertEquals(Level.WARN, context.getLogger("Exposed").level)
+        assertEquals(Level.ERROR, context.getLogger("Exposed").level)
         assertEquals(Level.INFO, context.getLogger(Logger.ROOT_LOGGER_NAME).level)
     }
 }

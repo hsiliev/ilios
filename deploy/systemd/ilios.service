@@ -10,9 +10,11 @@ Group=@APP_USER@
 # the database lives in ./data relative to this directory
 WorkingDirectory=@INSTALL_DIR@
 EnvironmentFile=-@CONF_DIR@/ilios.env
-Environment=JAVA_OPTS=-Xms128m -Xmx512m
+Environment="JAVA_OPTS=-Xms128m -Xmx256m"
 ExecStart=@INSTALL_DIR@/app/bin/ilios
 Restart=on-failure
+# the JVM exits with 143 when stopped (SIGTERM): that is a normal stop, not a failure
+SuccessExitStatus=143
 RestartSec=5s
 SyslogIdentifier=ilios
 

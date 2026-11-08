@@ -7,8 +7,8 @@
             <pattern>%prio[%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
-    <!-- Exposed reports H2's auto-named foreign-key indexes as "differs only in name"; harmless, so only warnings and errors -->
-    <logger name="Exposed" level="warn"/>
+    <!-- Exposed warns at every start that H2's auto-named foreign-key indexes are not mapped in code; harmless, so only errors -->
+    <logger name="Exposed" level="error"/>
     <root level="info">
         <appender-ref ref="STDERR"/>
     </root>
