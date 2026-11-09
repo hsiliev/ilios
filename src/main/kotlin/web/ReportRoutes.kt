@@ -9,6 +9,7 @@ import ilios.report.nightPlans
 import ilios.solax.SolaxReadings
 import ilios.solax.SolaxRepository
 import ilios.solax.SolaxService
+import ilios.solax.slotsByDay
 import ilios.weather.WeatherService
 import io.ktor.server.application.call
 import io.ktor.server.response.respond
@@ -52,6 +53,7 @@ private fun reportOf(loc: Loc, weather: WeatherService): Report {
         load = solar(emptyMap()) { sx.consumption(loc.id) },
         dischargeProfile = solar(emptyList()) { sx.dischargeProfile(loc.id, today) },
         loadByDay = solar(emptyMap()) { sx.loadByDay(loc.id, today) },
+        slotsByDay = solar(emptyMap()) { slotsByDay(loc.id, today) },
         plans = solar(emptyMap()) { nightPlans(loc.id) },
         badCloud = solar(emptyMap()) { sx.badProduced(loc.id) },
     )

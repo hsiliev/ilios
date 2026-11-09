@@ -32,9 +32,11 @@ function placeCard(l,reload,move){
   const maxCharge=h('input',{type:'number',min:0.5,max:6,step:0.5,value:(l.maxChargeW??2000)/1000,style:'width:100%',title:'Най-голямата мощност (kW), с която инверторът зарежда батерията от мрежата'});
   // not a setting: the planner uses the efficiency measured on the night charges, the default until there is one
   const effLabel=h('span',{cls:'mut',style:'font-size:13px'},l.chargeEffMeasured!=null?'измерена: '+l.chargeEffMeasured+' %':'още не е измерена, използва се '+l.chargeEff+' %');
+  // not a setting either: the highest house load at which the night charge still went on, measured on the last nights
+  const loadLabel=h('span',{cls:'mut',style:'font-size:13px',title:'Консумацията в къщата, над която инверторът спира да зарежда батерията'},l.chargeLoadLimitW!=null?'измерено '+(l.chargeLoadLimitW/1000).toFixed(1).replace('.',',')+'kW':'още не е измерено');
   const control=h('input',{type:'checkbox',checked:!!l.allowControl});
   // the management panel: the inverter is programmed to charge the battery only when this is on
-  const manage=h('div',{cls:'fields',hidden:!l.allowControl},h('span',{},'Резервирана батерия (%)'),reserve,h('span',{},'Макс. мощност на зареждане (kW)'),maxCharge,h('span',{},'Ефективност на зареждане'),effLabel);
+  const manage=h('div',{cls:'fields',hidden:!l.allowControl},h('span',{},'Резервирана батерия (%)'),reserve,h('span',{},'Макс. мощност на зареждане (kW)'),maxCharge,h('span',{},'Ефективност на зареждане'),effLabel,h('span',{},'Максимално ниво на зареждане'),loadLabel);
   control.addEventListener('change',()=>{manage.hidden=!control.checked});
   const panel=h('div',{cls:'panel'},h('label',{cls:'inl'},control,' Разреши управлене'),manage);
   const fields=h('div',{cls:'fields'},

@@ -7,6 +7,7 @@ import ilios.WEEK_DAYS
 import ilios.db.DEFAULT_SUPPLIER
 import ilios.db.Loc
 import ilios.mondayOf
+import ilios.solax.LoadSlot
 import ilios.solax.SolaxPlant
 import ilios.weather.Day
 import ilios.weather.IntraPoint
@@ -30,6 +31,7 @@ private class EstimateInput(
     val load: Map<LocalDate, Double>,
     val loadHistory: List<Map<String, Double>>,
     val loadByDay: Map<LocalDate, Map<String, Double>>,
+    val slotsByDay: Map<LocalDate, Map<String, LoadSlot>>,
     val plans: Map<LocalDate, NightPlan>,
     val kwp: Double,
     val ratio: Double,
@@ -57,6 +59,7 @@ fun buildReport(
     dischargeProfile: List<DischargePoint> = emptyList(),
     loadByDay: Map<LocalDate, Map<String, Double>> = emptyMap(),
     loadHistory: List<Map<String, Double>> = loadByDay.values.toList(),
+    slotsByDay: Map<LocalDate, Map<String, LoadSlot>> = emptyMap(),
     plans: Map<LocalDate, NightPlan> = emptyMap(),
     badCloud: Map<LocalDate, Double> = emptyMap(),
 ): Report {
@@ -71,7 +74,8 @@ fun buildReport(
     val estimate = battery?.let {
         estimateRestOfToday(
             EstimateInput(
-                loc, days, today, intraday, it, batteryToday, produced, load, loadHistory, loadByDay, plans, kwp, ratio,
+                loc, days, today, intraday, it, batteryToday, produced, load, loadHistory, loadByDay, slotsByDay,
+                plans, kwp, ratio,
                 pvForecast, pvForecastNext,
             ),
         )
@@ -282,6 +286,17 @@ private fun plannedChargeOf(
             )?.takeIf { it > loc.reservedPct }
             ?: return null
     val running = stored?.chargeUntil ?: 0L > System.currentTimeMillis()
+    val stops =
+        chargeStops(
+            i.slotsByDay,
+            w.end % SLOTS_PER_DAY,
+            minTemps(i.days),
+            i.days.find {
+                it.date == w.planDay
+            }?.tMin,
+            loc.maxChargeW,
+        )
+    val power = loc.maxChargeW.toDouble()
     val start =
         plannedChargeStart(
             plain,
@@ -289,20 +304,22 @@ private fun plannedChargeOf(
             w.end,
             i.battery.batteryKwh,
             target,
-            loc.maxChargeW.toDouble(),
+            power,
             loc.chargeEfficiency,
             running,
-            chargeStops(
-                i.loadByDay,
-                w.end % SLOTS_PER_DAY,
-                minTemps(i.days),
-                i.days.find {
-                    it.date == w.planDay
-                }?.tMin,
-            ),
+            stops,
         )
             ?: return null
-    return PlannedCharge(start, w.end, loc.maxChargeW.toDouble(), target, loc.chargeEfficiency)
+    // the energy missing when the charge starts decides which night's pauses are replayed
+    val missingKwh = (target - (plain.points.getOrNull(start - from)?.soc ?: target)) / PERCENT * i.battery.batteryKwh
+    return PlannedCharge(
+        start,
+        w.end,
+        power,
+        target,
+        loc.chargeEfficiency,
+        stops.cutSlots(missingKwh, power, loc.chargeEfficiency),
+    )
 }
 
 private fun storedTarget(stored: NightPlan): Double? = stored.takeIf { !it.reached && it.totalKwh > 0 }?.targetSoc

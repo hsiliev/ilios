@@ -133,6 +133,25 @@ class EstimateTest {
     }
 }
 
+class PlannedChargePauseTest {
+    @Test
+    fun thePlannedChargePausesInItsCutSlotsAndTheHouseRunsOnTheGrid() {
+        val pattern = DoubleArray(576) { 500.0 }
+        val end = 288 + slotOf("06:55")
+        val cut = BooleanArray(144) { it in 10..19 } // counted back from the end: 10 slots pause
+        // 6 kWh at 2 kW x 70 % takes 51 slots; 60 slots are planned, so the pause comes before the target is reached
+        val charge = PlannedCharge(end - 60, end, 2000.0, 60.0, 0.7, cut)
+        val e = estimateDay(slotOf("22:00"), 0.0, 10.0, pattern, 0, end, charge) { 0.0 }!!
+        val paused = e.points.filter { it.cut }
+        assertEquals(10, paused.size)
+        assertTrue(paused.all { it.chargeW == 0.0 && it.batW == 0.0 && it.gridW == 500.0 })
+        val first = e.points.indexOfFirst { it.cut }
+        assertEquals(e.points[first - 1].soc, e.points[first].soc, 1e-9) // the battery stays where it was
+        assertTrue(e.points.none { it.cut && it.chargeW > 0 })
+        assertTrue(e.points.last().soc > 55.0 && e.points.last().soc <= 60.0)
+    }
+}
+
 class ProjectedChargeTest {
     private val today = java.time.LocalDate.of(2026, 10, 22)
     private fun report(allow: Boolean): Report {

@@ -151,3 +151,21 @@ object SolaxReadings {
             }
     }
 }
+
+/**
+ * Every stored finished day's 5-minute consumption and charging power, oldest first: the history the charge stops are
+ * worked out from (the whole retention of `discharge_days`, not only the days of the discharge profile).
+ */
+fun slotsByDay(locationId: Long, today: LocalDate): Map<LocalDate, Map<String, LoadSlot>> = transaction {
+    DischargeDays.selectAll().where {
+        DischargeDays.locationId eq locationId and
+            (DischargeDays.day less today.toString()) and
+            DischargeDays.loadW.isNotNull()
+    }
+        .groupBy({
+            it[DischargeDays.day]
+        }, { it[DischargeDays.t] to LoadSlot(it[DischargeDays.loadW]!!, it[DischargeDays.chargeW] ?: 0.0) })
+        .toSortedMap()
+        .map { (day, points) -> LocalDate.parse(day) to points.toMap() }
+        .toMap()
+}

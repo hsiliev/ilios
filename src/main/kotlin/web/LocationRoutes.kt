@@ -2,6 +2,7 @@ package ilios.web
 
 import ilios.HttpError
 import ilios.MILLIS
+import ilios.SLOTS_PER_HOUR
 import ilios.auth.AuthService
 import ilios.badRequest
 import ilios.db.DEFAULT_CHARGE_EFF_PCT
@@ -11,11 +12,16 @@ import ilios.db.MAX_MAX_CHARGE_W
 import ilios.db.MAX_RESERVE
 import ilios.db.MIN_MAX_CHARGE_W
 import ilios.db.locOf
+import ilios.report.CHARGE_END_BEFORE_MS
+import ilios.report.SLOT_MS
 import ilios.report.TARIFFS
+import ilios.report.measuredChargingLoadW
+import ilios.report.nightZone
 import ilios.solax.SolaxConnection
 import ilios.solax.SolaxInfo
 import ilios.solax.SolaxRepository
 import ilios.solax.SolaxService
+import ilios.solax.slotsByDay
 import ilios.weather.WeatherService
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -37,7 +43,9 @@ import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
+import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.roundToInt
 
 private const val MAX_LAT = 90.0
 private const val MAX_LON = 180.0
@@ -46,10 +54,19 @@ private const val MAX_PLACES = 20
 private const val MAX_NAME = 120
 private const val MAX_COUNTRY = 80
 
+/** The highest house load (W) at which the place's night charge still went on, from its stored nights; or null. */
+private fun chargeLoadLimitOf(r: ResultRow): Int? {
+    if (!r[Locations.solar]) return null
+    val zone = ZoneId.of(r[Locations.tz])
+    val today = LocalDate.now(zone)
+    val endSlot = nightZone(today, zone).second * SLOTS_PER_HOUR - (CHARGE_END_BEFORE_MS / SLOT_MS).toInt()
+    return measuredChargingLoadW(slotsByDay(r[Locations.id], today), endSlot, r[Locations.maxChargeW])?.roundToInt()
+}
+
 private fun locationOut(r: ResultRow, info: SolaxInfo?) = LocationOut(
     r[Locations.id], r[Locations.name], r[Locations.country], r[Locations.solar], r[Locations.supplier],
     r[Locations.reservedPct], r[Locations.allowControl], r[Locations.maxChargeW],
-    r[Locations.chargeEffMeasured] ?: DEFAULT_CHARGE_EFF_PCT, r[Locations.chargeEffMeasured],
+    r[Locations.chargeEffMeasured] ?: DEFAULT_CHARGE_EFF_PCT, r[Locations.chargeEffMeasured], chargeLoadLimitOf(r),
     info?.clientId.orEmpty(), info?.plantId.orEmpty(), info != null, info?.status.orEmpty(),
     info?.batteryStatus.orEmpty(), info?.plants.orEmpty(),
 )

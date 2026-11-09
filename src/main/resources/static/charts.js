@@ -174,7 +174,7 @@ function batterySeries(pts,prev,fc,fcNext,estimate,now,w){
   const byServer=estimate?.points?.length>0;
   let eo=0,et='';
   const ep=byServer?estimate.points.map(p=>{if(et&&p.t<et)eo++;et=p.t;return{...p,m:tmin(p.t,eo)}}).filter(p=>p.m>nm&&p.m>last&&inWin(p.m)):[];
-  return{hist,future,ep,est:ep.map(p=>({m:p.m,w:p.gridW,c:p.chargeW||0})),ew:byServer?1:3};
+  return{hist,future,ep,est:ep.map(p=>({m:p.m,w:p.gridW,c:p.chargeW||0,k:!!p.cut})),ew:byServer?1:3};
 }
 
 // the frame: x from minutes to pixels, and the y scales (kW above the axis, grid kW below it, charge in %) on one kW scale
@@ -232,7 +232,7 @@ function batteryData(g,{hist,future,ep,est,ew},now){
   // pale bars: Open-Meteo's forecast (15-minute steps) for the next hours
   future.forEach(p=>{const bw=step*3*.9;o+=`<rect x="${L+step*at(p.m)+step*1.5-bw/2}" y="${yk(p.pvW/1000)}" width="${bw}" height="${midY-yk(p.pvW/1000)}" class="kfc"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*3}" height="${ih}" class="hit" data-tip="${hm(p.m)}|прогноза ${num(p.pvW/1000,2)} kW"/>`});
   // pale red bars: the grid power the estimate expects
-  est.forEach(p=>{const v=p.w/1000,bw=step*ew*.9;if(v>0)o+=`<rect x="${L+step*at(p.m)+step*ew/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbatf"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*ew}" height="${ih}" class="hit" data-tip="${hm(p.m)}|очаквано от мрежата ${num(v,2)} kW${p.c>0?'|в т.ч. планирано зареждане '+num(p.c/1000,2)+' kW':''}"/>`});
+  est.forEach(p=>{const v=p.w/1000,bw=step*ew*.9;if(v>0)o+=`<rect x="${L+step*at(p.m)+step*ew/2-bw/2}" y="${midY}" width="${bw}" height="${yd(v)-midY}" class="kbatf"/><rect x="${L+step*at(p.m)}" y="${T}" width="${step*ew}" height="${ih}" class="hit" data-tip="${hm(p.m)}|очаквано от мрежата ${num(v,2)} kW${p.c>0?'|в т.ч. планирано зареждане '+num(p.c/1000,2)+' kW':''}${p.k?'|зареждането е спряно – голяма консумация':''}"/>`});
   const line=(ps,extra='')=>ps.length?`<polyline points="${ps.map(p=>(L+step*(at(p.m)+.5))+','+yp(p.soc)).join(' ')}" class="bsoc"${extra}/>`:'';
   o+=line(ep,' stroke-dasharray="5 4"')+line(hist.filter(p=>p.soc!=null)); // dashed: the charge the estimate expects
   const nm=nowMin(now),nx=X(nm);

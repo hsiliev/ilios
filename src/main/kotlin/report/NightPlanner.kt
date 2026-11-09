@@ -10,6 +10,7 @@ import ilios.solax.SolaxPlant
 import ilios.solax.SolaxReadings
 import ilios.solax.SolaxRepository
 import ilios.solax.SolaxService
+import ilios.solax.slotsByDay
 import ilios.weather.WeatherService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
@@ -119,10 +120,11 @@ class NightPlanner(private val weather: WeatherService, solax: SolaxService) {
         val gap = (CHARGE_END_BEFORE_MS / SLOT_MS).toInt()
         val days = weather.days(loc)
         val stops = chargeStops(
-            SolaxReadings.loadByDay(loc.id, local.toLocalDate()),
+            slotsByDay(loc.id, local.toLocalDate()),
             tTo * SLOTS_PER_HOUR - gap,
             minTemps(days),
             days.find { it.date == target }?.tMin,
+            loc.maxChargeW,
         )
         val (chargeUntil, control) =
             inverter.control(loc, existing, plant, targetSoc, reached, local, target, tTo, stops)

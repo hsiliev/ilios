@@ -4,6 +4,9 @@ import ilios.solax.api.plantsJson
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 
+/** One stored 5-minute step of a past day: the home's consumption and the battery's charging power (both W). */
+class LoadSlot(val loadW: Double, val chargeW: Double)
+
 /** A plant of the SolaX account, as offered in the settings dropdown. */
 @Serializable
 class PlantOption(val id: String, val name: String)

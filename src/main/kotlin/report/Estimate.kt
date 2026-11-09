@@ -22,6 +22,7 @@ class EstimatePoint(
     val gridW: Double,
     val soc: Double,
     val chargeW: Double = 0.0,
+    val cut: Boolean = false, // the planned charge pauses here for the house load
 )
 
 /**
@@ -40,7 +41,8 @@ class Estimate(val points: List<EstimatePoint>, val peakSoc: Double, val importK
  * the estimate, 288 and up are tomorrow) the battery takes [powerW] from the grid until it holds [targetSoc] %.
  * While it runs, the house is
  * served from the grid too (verified on the inverter: the grid supplies the charge plus the load) and the battery is
- * not discharged.
+ * not discharged. [cut] says in which of the slots before [toSlot] (the slot just before it first) the charge
+ * pauses for the house load, as past nights did ([ChargeStops.cutSlots]).
  */
 class PlannedCharge(
     val fromSlot: Int,
@@ -48,8 +50,12 @@ class PlannedCharge(
     val powerW: Double,
     val targetSoc: Double,
     val efficiency: Double = 1.0,
+    val cut: BooleanArray = BooleanArray(0),
 ) {
     fun runsAt(slot: Int) = slot in fromSlot until toSlot
+
+    /** The charge pauses in this slot. */
+    fun cutAt(slot: Int) = (toSlot - 1 - slot).let { it in cut.indices && cut[it] }
 
     /** The energy the battery of [capacityKwh] holds at the target charge. */
     fun targetKwh(capacityKwh: Double) = targetSoc / PERCENT * capacityKwh
@@ -122,7 +128,13 @@ fun loadPattern(history: List<Map<String, Double>>, weatherScale: Double): Doubl
 private const val SLOT_HOURS_KW = SLOT_MINUTES.toDouble() / MINUTES_PER_HOUR / MILLIS // W over a 5-minute slot -> kWh
 
 /** What happened in one slot (W); [drained] when the house needed the grid because the battery was at its floor. */
-private class SlotResult(val batW: Double, val gridW: Double, val chargeW: Double = 0.0, val drained: Boolean = false)
+private class SlotResult(
+    val batW: Double,
+    val gridW: Double,
+    val chargeW: Double = 0.0,
+    val drained: Boolean = false,
+    val cut: Boolean = false,
+)
 
 /**
  * The battery while it is simulated: the sun serves the house first, the surplus charges the battery, a shortfall
@@ -135,9 +147,12 @@ private class BatterySim(var energyKwh: Double, val capacityKwh: Double, val flo
      * One slot with [loadW] and [pvW]; a [charge] that runs now charges from the grid while the battery is under its
      * target.
      */
-    fun step(loadW: Double, pvW: Double, charge: PlannedCharge?): SlotResult {
+    fun step(loadW: Double, pvW: Double, charge: PlannedCharge?, paused: Boolean = false): SlotResult {
         val net = (pvW - loadW) * SLOT_HOURS_KW
         return when {
+            charge != null && paused && energyKwh < charge.targetKwh(capacityKwh) -> {
+                pause(net)
+            }
             charge != null && energyKwh < charge.targetKwh(capacityKwh) -> {
                 chargeFromGrid(charge, net)
             }
@@ -160,6 +175,12 @@ private class BatterySim(var energyKwh: Double, val capacityKwh: Double, val flo
         energyKwh += add
         val chargeW = add / charge.efficiency / SLOT_HOURS_KW // drawn from the grid
         return SlotResult(0.0, maxOf(0.0, -netKwh / SLOT_HOURS_KW) + chargeW, chargeW)
+    }
+
+    /** The charge gives way to the house: the battery neither charges nor discharges and the grid serves the load. */
+    private fun pause(netKwh: Double): SlotResult {
+        if (netKwh > 0) energyKwh = minOf(capacityKwh, energyKwh + netKwh) // a sun surplus still charges it
+        return SlotResult(0.0, maxOf(0.0, -netKwh / SLOT_HOURS_KW), cut = true)
     }
 
     private fun drain(shortfallKwh: Double): SlotResult {
@@ -196,7 +217,8 @@ fun estimateDay(
     var hitFloor = false
     val points = (nowSlot until maxOf(288, untilSlot)).map { i ->
         val pv = pvW(i)
-        val r = sim.step(pattern[i], pv, charge?.takeIf { it.runsAt(i) })
+        val running = charge?.takeIf { it.runsAt(i) }
+        val r = sim.step(pattern[i], pv, running, running?.cutAt(i) == true)
         if (i < 288) { // the summary covers today only
             importKwh += r.gridW * SLOT_HOURS_KW
             peak = maxOf(peak, sim.soc)
@@ -210,6 +232,7 @@ fun estimateDay(
             round(r.gridW),
             r1(sim.soc),
             round(r.chargeW),
+            r.cut,
         )
     }
     return Estimate(points, r1(peak), r2(importKwh), peak < FULL_SOC || hitFloor)

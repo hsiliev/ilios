@@ -47,6 +47,7 @@ import kotlinx.serialization.Serializable
     val maxChargeW: Int = DEFAULT_MAX_CHARGE_W,
     val chargeEff: Int = DEFAULT_CHARGE_EFF_PCT, // the share the planner uses: measured, else the default
     val chargeEffMeasured: Int? = null,
+    val chargeLoadLimitW: Int? = null, // the highest house load at which the night charge still goes on, measured
     val solaxClientId: String = "",
     val solaxPlantId: String = "",
     val solaxHasSecret: Boolean = false,
